@@ -1,0 +1,20 @@
+[
+  { "name": "Bronze", "division": "I",   "minPoints": 0,    "color": "#CD7F32", "icon": "https://cdn3.emoji.gg/emojis/60886-fortnitebronzei.png" },
+  { "name": "Bronze", "division": "II",  "minPoints": 100,  "color": "#CD7F32", "icon": "https://cdn3.emoji.gg/emojis/60886-fortnitebronzei.png" },
+  { "name": "Bronze", "division": "III", "minPoints": 200,  "color": "#CD7F32", "icon": "https://cdn3.emoji.gg/emojis/60886-fortnitebronzei.png" },
+  { "name": "Silver", "division": "I",   "minPoints": 300,  "color": "#C0C0C0", "icon": "https://cdn3.emoji.gg/emojis/58666-fortnitesilveri.png" },
+  { "name": "Silver", "division": "II",  "minPoints": 400,  "color": "#C0C0C0", "icon": "https://cdn3.emoji.gg/emojis/58666-fortnitesilveri.png" },
+  { "name": "Silver", "division": "III", "minPoints": 500,  "color": "#C0C0C0", "icon": "https://cdn3.emoji.gg/emojis/58666-fortnitesilveri.png" },
+  { "name": "Gold",   "division": "I",   "minPoints": 600,  "color": "#7A5CFF", "icon": "https://cdn3.emoji.gg/emojis/28844-fortnitegoldi.png" },
+  { "name": "Gold",   "division": "II",  "minPoints": 700,  "color": "#7A5CFF", "icon": "https://cdn3.emoji.gg/emojis/28844-fortnitegoldi.png" },
+  { "name": "Gold",   "division": "III", "minPoints": 800,  "color": "#7A5CFF", "icon": "https://cdn3.emoji.gg/emojis/28844-fortnitegoldi.png" },
+  { "name": "Platinum", "division": "I",   "minPoints": 900,  "color": "#A855F7", "icon": "https://cdn3.emoji.gg/emojis/28844-fortniteplatinumi.png" },
+  { "name": "Platinum", "division": "II",  "minPoints": 1000, "color": "#A855F7", "icon": "https://cdn3.emoji.gg/emojis/28844-fortniteplatinumi.png" },
+  { "name": "Platinum", "division": "III", "minPoints": 1100, "color": "#A855F7", "icon": "https://cdn3.emoji.gg/emojis/28844-fortniteplatinumi.png" },
+  { "name": "Diamond", "division": "I",   "minPoints": 1200, "color": "#1DAEFF", "icon": "https://cdn3.emoji.gg/emojis/29369-fortnitediamondi.png" },
+  { "name": "Diamond", "division": "II",  "minPoints": 1300, "color": "#1DAEFF", "icon": "https://cdn3.emoji.gg/emojis/29369-fortnitediamondi.png" },
+  { "name": "Diamond", "division": "III", "minPoints": 1400, "color": "#1DAEFF", "icon": "https://cdn3.emoji.gg/emojis/29369-fortnitediamondi.png" },
+  { "name": "Elite",   "division": null,   "minPoints": 1500, "color": "#FF4FD8", "icon": "https://cdn3.emoji.gg/emojis/95032-fortniteelite.png" },
+  { "name": "Champion","division": null,   "minPoints": 1600, "color": "#2EF2FF", "icon": "https://cdn3.emoji.gg/emojis/95032-fortnitechampion.png" },
+  { "name": "Unreal",  "division": null,   "minPoints": 1800, "color": "#FF6B35", "icon": "https://cdn3.emoji.gg/emojis/4901-fortniteunreal.png" }
+]
