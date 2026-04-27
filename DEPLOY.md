@@ -119,6 +119,23 @@ Frontend: React (Create React App)
 
 ---
 
+## Discord Server Membership
+
+All users **must be a member** of the Discord server to log in. The backend checks guild membership via the `guilds` OAuth scope.
+
+**Server invite:** `https://discord.gg/hMA23CEPHZ`
+
+**How it works:**
+1. User clicks "Sign in with Discord"
+2. Discord OAuth authorizes → backend checks if user is in guild (`DISCORD_GUILD_ID`)
+3. If not a member → redirects to frontend with `?error=not_server_member`
+4. Frontend shows error with a "Join Server" button linking to the invite
+5. User joins server, tries login again → succeeds
+
+**Login page also shows** a "Must be in our Discord server to play — Join here" notice below the login button so users know before they attempt login.
+
+---
+
 ## MongoDB Atlas
 
 **Cluster:** `souy.l3881fj.mongodb.net`  
