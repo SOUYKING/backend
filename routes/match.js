@@ -371,8 +371,8 @@ router.get('/:matchId/active-info', authenticate, async (req, res) => {
         avatar: opponent.avatar || oppUser?.discordAvatar,
       },
       mapCode: activeMatch.mapCode || null,
-      player1: { username: activeMatch.player1.username },
-      player2: { username: activeMatch.player2.username },
+      player1: { id: activeMatch.player1.userId, username: activeMatch.player1.username, avatar: activeMatch.player1.avatar },
+      player2: { id: activeMatch.player2.userId, username: activeMatch.player2.username, avatar: activeMatch.player2.avatar },
     });
   } catch (error) {
     console.error('Error fetching active match info:', error);
