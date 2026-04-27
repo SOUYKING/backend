@@ -20,7 +20,27 @@ const connectDB = async (retryCount = 0) => {
       socketTimeoutMS: 45000,
     });
 
-    await mongoose.syncIndexes();
+    try {
+      const db = mongoose.connection.db;
+      const collections = await db.listCollections().toArray();
+      const usersCollection = collections.find(c => c.name === 'users');
+      if (usersCollection) {
+        const indexes = await db.collection('users').indexes();
+        const epicIndex = indexes.find(i => i.name === 'epicGamesId_1');
+        if (epicIndex) {
+          await db.collection('users').dropIndex('epicGamesId_1');
+          console.log('Dropped old unique index epicGamesId_1');
+        }
+        const epicNameIndex = indexes.find(i => i.name === 'epicGamesName_1');
+        if (epicNameIndex) {
+          await db.collection('users').dropIndex('epicGamesName_1');
+          console.log('Dropped old unique index epicGamesName_1');
+        }
+      }
+    } catch (idxErr) {
+      console.error('Index cleanup error (non-fatal):', idxErr.message);
+    }
+
     console.log("MongoDB connected successfully");
   } catch (error) {
     console.error("MongoDB error:", error.message);
