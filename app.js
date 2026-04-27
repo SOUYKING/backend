@@ -31,15 +31,29 @@ const server = http.createServer(app);
 
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
-const io = socketIo(server, {
-  cors: { origin: FRONTEND_URL, methods: ['GET', 'POST'] },
-});
+const allowedOrigins = [
+  FRONTEND_URL,
+  'http://localhost:3000',
+  'https://backend-97zg.onrender.com',
+  process.env.FRONTEND_URL2,
+].filter(Boolean);
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    callback(null, true);
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  credentials: true,
+};
+
+const io = socketIo(server, { cors: corsOptions });
 socketManager.init(io);
 eventBus.init(io);
 const adminSocket = setupAdminSocket(io);
 GameEngine.init();
 
-app.use(cors({ origin: FRONTEND_URL }));
+app.use(cors(corsOptions));
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(securityHeaders);
 app.use(globalRateLimit);
@@ -428,17 +442,9 @@ io.on('connection', (socket) => {
 
 const PORT = process.env.PORT || 5000;
 
-function startServer(port) {
-  server.listen(port, () => {
-    console.log(`🚀 Server running on http://localhost:${port}`);
-  }).on('error', (err) => {
-    if (err.code === 'EADDRINUSE') {
-      console.log(`❌ Port ${port} busy. Trying ${port + 1}...`);
-      startServer(port + 1);
-    } else {
-      console.error(err);
-    }
-  });
-}
-
-startServer(PORT);
+server.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+}).on('error', (err) => {
+  console.error('❌ Failed to start server:', err.message);
+  process.exit(1);
+});
