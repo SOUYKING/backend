@@ -65,6 +65,8 @@ router.get('/callback', async (req, res) => {
   try {
     console.log("Processing OAuth callback with code:", code.substring(0, 20) + "...");
 
+    const callbackUrl = process.env.DISCORD_CALLBACK_URL || `${req.protocol}://${req.get('host')}/auth/callback`;
+
     const tokenResponse = await axios.post(
       'https://discord.com/api/oauth2/token',
       new URLSearchParams({
@@ -72,7 +74,7 @@ router.get('/callback', async (req, res) => {
         client_secret: process.env.DISCORD_CLIENT_SECRET,
         code,
         grant_type: 'authorization_code',
-        redirect_uri: process.env.DISCORD_CALLBACK_URL,
+        redirect_uri: callbackUrl,
       }),
       {
         headers: {
@@ -271,9 +273,11 @@ router.get('/callback', async (req, res) => {
     return res.redirect(`${FRONTEND_URL}?token=${token}`);
 
   } catch (error) {
-    console.error('Error during OAuth callback:', error.response?.data || error.message);
-    logAuthAttempt({ ip: clientIP, success: false, reason: 'oauth_failed' });
-    eventBus.emit('admin:login-attempt', { ip: clientIP, success: false, reason: 'oauth_failed' }, { source: 'auth' });
+    const discordErr = error.response?.data || {};
+    const statusCode = error.response?.status || '';
+    console.error('Error during OAuth callback:', statusCode, JSON.stringify(discordErr).substring(0, 300) || error.message);
+    logAuthAttempt({ ip: clientIP, success: false, reason: discordErr.error || 'oauth_failed' });
+    eventBus.emit('admin:login-attempt', { ip: clientIP, success: false, reason: discordErr.error || 'oauth_failed' }, { source: 'auth' });
     return res.redirect(`${FRONTEND_URL}?error=oauth_failed`);
   }
 });
