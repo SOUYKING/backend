@@ -44,19 +44,14 @@ function isPrivateOrLocalIP(ip = '') {
   return false;
 }
 
-function normalizeIP(ip) {
-  if (!ip) return 'unknown';
-  return ip.replace('::ffff:', '').toLowerCase();
-}
-
 function getClientIP(req) {
   const forwarded = req.headers['x-forwarded-for'];
-  if (forwarded) return normalizeIP(forwarded.split(',')[0].trim());
-  return normalizeIP(req.headers['x-real-ip']
+  if (forwarded) return forwarded.split(',')[0].trim();
+  return req.headers['x-real-ip']
     || req.ip
     || req.connection?.remoteAddress
     || req.socket?.remoteAddress
-    || 'unknown');
+    || 'unknown';
 }
 
 router.get('/callback', async (req, res) => {
@@ -259,34 +254,6 @@ router.get('/callback', async (req, res) => {
       } catch (ipGuardError) {
         console.error('Login IP guard error:', ipGuardError.message);
       }
-    }
-
-    // Direct same-IP check across accounts
-    try {
-      const sameIpUsers = await User.find({
-        'ipAddresses.ip': clientIP,
-        discordId: { $ne: user.discordId },
-      });
-      if (sameIpUsers.length > 0) {
-        console.warn(`[SAME_IP] ${user.discordName} shares IP ${clientIP} with ${sameIpUsers.length} other account(s): ${sameIpUsers.map(u => u.discordName).join(', ')}`);
-        user.addAnticheatFlag('multiAccounting', 'high', 'SYSTEM', `IP ${clientIP} shared with ${sameIpUsers.length} other account(s): ${sameIpUsers.map(u => u.discordName).join(', ')}`);
-        user.anticheatScore = Math.max(0, user.anticheatScore - 30);
-        user.calculateTrustScore();
-        await user.save();
-        eventBus.emit('admin:flag-raised', {
-          discordId: user.discordId, discordName: user.discordName,
-          flag: 'multiAccounting', severity: 'high', ip: clientIP,
-          description: `IP shared with ${sameIpUsers.length} other accounts`
-        }, { source: 'auth' });
-        for (const match of sameIpUsers) {
-          match.addAnticheatFlag('multiAccounting', 'high', 'SYSTEM', `IP ${clientIP} shared with ${user.discordName}`);
-          match.anticheatScore = Math.max(0, match.anticheatScore - 20);
-          match.calculateTrustScore();
-          await match.save();
-        }
-      }
-    } catch (sameIpErr) {
-      console.error('Same IP check error:', sameIpErr.message);
     }
 
     const token = jwt.sign(
