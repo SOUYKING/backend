@@ -150,9 +150,19 @@ router.get('/callback', async (req, res) => {
     }
 
     if (process.env.DISCORD_GUILD_ID && !isServerMember) {
-      logAuthAttempt({ discordId: discordUser.id, discordName: discordUser.username, role: userRole, ip: clientIP, success: false, reason: 'not_server_member' });
-      eventBus.emit('admin:login-attempt', { discordId: discordUser.id, discordName: discordUser.username, role: userRole, ip: clientIP, success: false, reason: 'not_server_member' }, { source: 'auth' });
-      return res.redirect(`${FRONTEND_URL}?error=not_server_member`);
+      logAuthAttempt({ discordId: discordUser.id, discordName: discordUser.username, role: 'player', ip: clientIP, success: true, reason: 'not_in_guild_defaulted_player' });
+      console.log(`User ${discordUser.username} not in guild, defaulting to player role`);
+      userRole = 'player';
+      userIsAdmin = false;
+      isOwner = false;
+    }
+
+    // Owner check works regardless of guild membership
+    if (process.env.OWNER_DISCORD_ID && discordUser.id === process.env.OWNER_DISCORD_ID && !isOwner) {
+      userRole = 'owner';
+      userIsAdmin = true;
+      isOwner = true;
+      console.log(`Owner override for ${discordUser.username}`);
     }
 
     let user;
