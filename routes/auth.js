@@ -7,6 +7,7 @@ const IPWhitelist = require('../models/IPWhitelist');
 const { getRank } = require('../utils/rankSystem');
 const authenticate = require('../middlewares/authenticate');
 const eventBus = require('../utils/eventBus');
+const AntiCheatSystem = require('../utils/anticheat');
 const router = express.Router();
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
@@ -212,6 +213,7 @@ router.get('/callback', async (req, res) => {
         console.log(`User updated: ${discordUser.username} (IP: ${clientIP})`);
 
         await runIPAnalysis(user, clientIP);
+        await AntiCheatSystem.trackLogin(req, user).catch(e => console.error('AntiCheat trackLogin error:', e.message));
       }
     } catch (dbError) {
       console.error('Database error during login:', dbError.message);
