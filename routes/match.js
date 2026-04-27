@@ -314,9 +314,9 @@ router.get('/:matchId/details', authenticate, async (req, res) => {
 
     const isParticipant = String(match.player1?._id) === String(user._id) || String(match.player2?._id) === String(user._id);
     const isStaff = req.user.role === 'admin' || req.user.role === 'owner' || req.user.role === 'staff';
-    if (!isParticipant && !isStaff) return res.status(403).json({ message: 'Not authorized to view this match' });
+    const isSpectator = !isParticipant && !isStaff;
 
-    const isPlayer1 = String(match.player1?._id) === String(user._id);
+    const isPlayer1 = isParticipant ? String(match.player1?._id) === String(user._id) : true;
     const selfUser = isPlayer1 ? match.player1 : match.player2;
     const oppUser = isPlayer1 ? match.player2 : match.player1;
 
@@ -338,6 +338,45 @@ router.get('/:matchId/details', authenticate, async (req, res) => {
   } catch (error) {
     console.error('Error fetching match details:', error);
     res.status(500).json({ message: 'Failed to fetch match details' });
+  }
+});
+
+// Public active match info (any logged-in user can view)
+router.get('/:matchId/active-info', authenticate, async (req, res) => {
+  try {
+    const activeMatch = GameEngine.getActiveMatch(req.params.matchId);
+    if (!activeMatch) return res.status(404).json({ message: 'Active match not found or already completed' });
+
+    const user = await User.findOne({ discordId: req.user.id });
+    const isStaff = req.user.role === 'admin' || req.user.role === 'owner' || req.user.role === 'staff';
+    const isParticipant = activeMatch.player1.userId === req.user.id || activeMatch.player2.userId === req.user.id;
+
+    const self = activeMatch.player1.userId === req.user.id ? activeMatch.player1 : activeMatch.player2;
+    const opponent = activeMatch.player1.userId === req.user.id ? activeMatch.player2 : activeMatch.player1;
+
+    const selfUser = isParticipant ? await User.findOne({ discordId: self.userId }).select('discordAvatar rankingPoints') : null;
+    const oppUser = await User.findOne({ discordId: opponent.userId }).select('discordAvatar rankingPoints');
+
+    res.json({
+      inMatch: true,
+      matchId: activeMatch.matchId,
+      isSpectator: !isParticipant && !isStaff,
+      isStaff,
+      self: isParticipant ? {
+        id: self.userId, username: self.username, epicName: self.epicName,
+        avatar: self.avatar || selfUser?.discordAvatar,
+      } : null,
+      opponent: {
+        id: opponent.userId, username: opponent.username, epicName: opponent.epicName,
+        avatar: opponent.avatar || oppUser?.discordAvatar,
+      },
+      mapCode: activeMatch.mapCode || null,
+      player1: { username: activeMatch.player1.username },
+      player2: { username: activeMatch.player2.username },
+    });
+  } catch (error) {
+    console.error('Error fetching active match info:', error);
+    res.status(500).json({ message: 'Failed to fetch match info' });
   }
 });
 
