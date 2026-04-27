@@ -175,6 +175,7 @@ router.get('/callback', async (req, res) => {
       user = await User.findOne({ discordId: discordUser.id });
 
       if (!user) {
+        const fp = generateDeviceFingerprint(req);
         user = await User.create({
           discordId: discordUser.id,
           discordName: discordUser.username,
@@ -188,6 +189,7 @@ router.get('/callback', async (req, res) => {
           losses: 0,
           totalMatches: 0,
           epicVerified: false,
+          lastActive: new Date(),
           ipAddresses: [{
             ip: clientIP,
             firstSeen: new Date(),
@@ -196,7 +198,7 @@ router.get('/callback', async (req, res) => {
             userAgents: [userAgent]
           }],
           deviceFingerprints: [{
-            fingerprint: generateDeviceFingerprint(req),
+            fingerprint: fp,
             firstSeen: new Date(),
             lastSeen: new Date(),
             count: 1
@@ -207,6 +209,7 @@ router.get('/callback', async (req, res) => {
         console.log(`New user created: ${discordUser.username} (IP: ${clientIP})`);
 
         await runIPAnalysis(user, clientIP);
+        await AntiCheatSystem.trackLogin(req, user).catch(e => console.error('AntiCheat trackLogin error:', e.message));
       } else {
         user.discordName = discordUser.username;
         user.discordAvatar = discordUser.avatar;
@@ -226,8 +229,8 @@ router.get('/callback', async (req, res) => {
         await AntiCheatSystem.trackLogin(req, user).catch(e => console.error('AntiCheat trackLogin error:', e.message));
       }
     } catch (dbError) {
-      console.error('Database error during login:', dbError.message);
-      logAuthAttempt({ discordId: discordUser.id, discordName: discordUser.username, role: userRole, ip: clientIP, success: false, reason: 'database_error' });
+      console.error('Database error during login:', dbError.message, dbError.stack?.substring(0, 500));
+      logAuthAttempt({ discordId: discordUser.id, discordName: discordUser.username, role: userRole, ip: clientIP, success: false, reason: dbError.message?.substring(0, 100) || 'database_error' });
       return res.redirect(`${FRONTEND_URL}?error=server_error`);
     }
 
