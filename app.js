@@ -25,6 +25,13 @@ const GameEngine = require('./core/GameEngine');
 const { getRank } = require('./utils/rankSystem');
 const { containsProfanity, filterProfanity } = require('./utils/wordFilter');
 
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled Rejection:', reason?.message || reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err.message);
+});
+
 const app = express();
 app.set('trust proxy', 1);
 const server = http.createServer(app);
