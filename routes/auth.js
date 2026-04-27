@@ -7,7 +7,6 @@ const IPWhitelist = require('../models/IPWhitelist');
 const { getRank } = require('../utils/rankSystem');
 const authenticate = require('../middlewares/authenticate');
 const eventBus = require('../utils/eventBus');
-const AntiCheatSystem = require('../utils/anticheat');
 const router = express.Router();
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
@@ -207,9 +206,6 @@ router.get('/callback', async (req, res) => {
         user.calculateTrustScore();
         await user.save();
         console.log(`New user created: ${discordUser.username} (IP: ${clientIP})`);
-
-        await runIPAnalysis(user, clientIP);
-        await AntiCheatSystem.trackLogin(req, user).catch(e => console.error('AntiCheat trackLogin error:', e.message));
       } else {
         user.discordName = discordUser.username;
         user.discordAvatar = discordUser.avatar;
@@ -224,13 +220,10 @@ router.get('/callback', async (req, res) => {
         user.calculateTrustScore();
         await user.save();
         console.log(`User updated: ${discordUser.username} (IP: ${clientIP})`);
-
-        await runIPAnalysis(user, clientIP);
-        await AntiCheatSystem.trackLogin(req, user).catch(e => console.error('AntiCheat trackLogin error:', e.message));
       }
     } catch (dbError) {
-      console.error('Database error during login:', dbError.message, dbError.stack?.substring(0, 500));
-      logAuthAttempt({ discordId: discordUser.id, discordName: discordUser.username, role: userRole, ip: clientIP, success: false, reason: dbError.message?.substring(0, 100) || 'database_error' });
+      console.error('Database error during login:', dbError.message);
+      logAuthAttempt({ discordId: discordUser.id, discordName: discordUser.username, role: userRole, ip: clientIP, success: false, reason: 'database_error' });
       return res.redirect(`${FRONTEND_URL}?error=server_error`);
     }
 
