@@ -17,14 +17,10 @@ const userSchema = new mongoose.Schema({
   epicGamesId: {
     type: String,
     default: null,
-    unique: true,
-    sparse: true,
   },
   epicGamesName: {
     type: String,
     default: null,
-    unique: true,
-    sparse: true,
   },
   epicVerified: {
     type: Boolean,
