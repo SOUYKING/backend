@@ -20,6 +20,7 @@ const connectDB = async (retryCount = 0) => {
       socketTimeoutMS: 45000,
     });
 
+    await mongoose.syncIndexes();
     console.log("MongoDB connected successfully");
   } catch (error) {
     console.error("MongoDB error:", error.message);
