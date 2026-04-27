@@ -65,7 +65,9 @@ router.get('/callback', async (req, res) => {
   try {
     console.log("Processing OAuth callback with code:", code.substring(0, 20) + "...");
 
-    const callbackUrl = process.env.DISCORD_CALLBACK_URL || `${req.protocol}://${req.get('host')}/auth/callback`;
+    const proto = req.headers['x-forwarded-proto'] || req.protocol;
+    const callbackUrl = process.env.DISCORD_CALLBACK_URL || `${proto}://${req.get('host')}/auth/callback`;
+    console.log('Callback URL constructed:', callbackUrl);
 
     const tokenResponse = await axios.post(
       'https://discord.com/api/oauth2/token',
