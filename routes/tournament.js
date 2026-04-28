@@ -273,19 +273,23 @@ router.post('/:id/join', authenticate, async (req, res) => {
       return res.status(404).json({ message: 'Tournament not found' });
     }
 
-    if (tournament.status === 'cancelled' || tournament.status === 'completed') {
-      return res.status(400).json({ message: 'Tournament is not active' });
-    }
-
     const now = new Date();
     const startDate = new Date(tournament.startDate);
     const endDate = new Date(tournament.endDate);
+
+    if (tournament.status === 'cancelled') {
+      return res.status(400).json({ message: 'Tournament is cancelled' });
+    }
 
     if (now < startDate) {
       return res.status(400).json({ message: `Tournament queue opens at ${startDate.toLocaleString()}`, queueOpensAt: startDate });
     }
     if (now > endDate) {
       return res.status(400).json({ message: 'Tournament has ended' });
+    }
+
+    if (tournament.status !== 'active') {
+      tournament.status = 'active';
     }
 
     const user = await User.findOne({ discordId: req.user.id });
@@ -317,6 +321,8 @@ router.post('/:id/join', authenticate, async (req, res) => {
         losses: 0,
         points: 0,
       });
+      await tournament.save();
+    } else if (tournament.isModified('status')) {
       await tournament.save();
     }
 
