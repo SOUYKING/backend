@@ -196,7 +196,28 @@ io.on('connection', (socket) => {
 
       const isRegistered = tournament.participants?.some((p) => p.userId === socket.userId);
       if (!isRegistered) {
-        return socket.emit('error', { message: 'You must register for this tournament before joining queue' });
+        tournament.participants = tournament.participants || [];
+        tournament.leaderboard = tournament.leaderboard || [];
+
+        tournament.participants.push({
+          userId: socket.userId,
+          discordName: user.discordName,
+          rankingPoints: user.rankingPoints,
+          epicName: user.epicGamesName,
+          registeredAt: new Date(),
+        });
+
+        tournament.leaderboard.push({
+          userId: socket.userId,
+          discordId: socket.userId,
+          discordName: user.discordName,
+          discordAvatar: user.discordAvatar || null,
+          wins: 0,
+          losses: 0,
+          points: 0,
+        });
+
+        await tournament.save();
       }
 
       if (tournament.status !== 'active') {
