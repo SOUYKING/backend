@@ -37,12 +37,13 @@ Frontend: React (Create React App)
 | File | Change |
 |------|--------|
 | `app.js` | Server startup log fixed (no hardcoded `localhost`), port retry loop removed, CORS upgraded to support multiple origins (local dev + Render), `trust proxy` enabled, global `unhandledRejection` and `uncaughtException` handlers added |
-| `utils/db.js` | MongoDB connection retry with 5 attempts (5s delay each), no longer crashes on failure, validates `MONGO_URI` is set before connecting, proper timeout options for Atlas |
+| `utils/db.js` | MongoDB connection retry with 5 attempts (5s delay each), no longer crashes on failure, validates `MONGO_URI` is set before connecting, proper timeout options for Atlas, drops old unique indexes on `epicGamesId`/`epicGamesName` on startup |
 | `utils/eventBus.js` | Added dedup cache for `receiveMessage` events (500ms window to block duplicates), suppressed noisy event logging for `receiveMessage` and `admin:stats-update` |
 | `utils/adminSocket.js` | Added `activeAdminConnections` Map to track admin socket IDs, disconnects old socket when same admin reconnects, cleaner disconnect handling |
 | `utils/socketManager.js` | (unchanged) |
 | `core/GameEngine.js` | Removed duplicate `_startMatchmakingLoop()` method, preserved async version |
-| `routes/auth.js` | OAuth callback now auto-constructs `redirect_uri` from request (no longer requires `DISCORD_CALLBACK_URL` env var), improved Discord error logging with status code and response body |
+| `routes/auth.js` | OAuth callback now auto-constructs `redirect_uri` from request (no longer requires `DISCORD_CALLBACK_URL` env var), improved Discord error logging with status code and response body, added global error handlers, removed Discord guild membership requirement for login |
+| `routes/match.js` | New `GET /match/:matchId/active-info` endpoint — allows any logged-in user to view active match info (spectator mode), removed strict participant check for match detail viewing |
 
 ### Frontend (`/frontend`)
 
@@ -53,19 +54,19 @@ Frontend: React (Create React App)
 | File | Change |
 |------|--------|
 | `src/App.js` | Restructured with `AuthenticatedApp` component inside `<Router>` to enable `useNavigate()`, all `window.location.href` replaced with `navigate()`, socket event handlers use named functions for proper cleanup |
-| `src/index.css` | Full design system: CSS variables, glassmorphism utilities, neon glow effects, skeleton loaders, page transitions, Orbitron/Inter/JetBrains Mono fonts, premium buttons and cards |
-| `src/App.css` | Animated background styles, modal system, notification toasts, form elements, pagination, tabs |
-| `src/utils/api.js` | Production URL auto-detection (checks `window.location.hostname`), defaults to `https://backend-97zg.onrender.com` in production, keeps `localhost:5000` for dev |
-| `src/components/GamingIcons.js` | Rewritten as `AnimatedBackground` with 12 gaming-themed SVG objects, mouse parallax, layered depth, floating rotation |
+| `src/index.css` | Full design system: CSS variables, glassmorphism utilities, neon glow effects, skeleton loaders, page transitions, Orbitron/Inter/JetBrains Mono fonts, premium buttons and cards, `#0a0a0a` dark background |
+| `src/App.css` | Animated background with glowing gradient overlay, modal system, notification toasts, form elements, pagination, tabs |
+| `src/utils/api.js` | Production URL auto-detection (checks `window.location.hostname`), defaults to `https://backend-97zg.onrender.com` in production, keeps `localhost:5000` for dev, new `getActiveMatchInfo()` API function |
+| `src/components/GamingIcons.js` | Animated background with real PNG assets (controller/headphone/keyboard/mouse/pistol/rifle/battle) floating in grid with parallax mouse movement, theme-colored CSS tints |
 | `src/components/Sidebar.js` | Added mobile menu toggle with overlay, glassmorphism design |
-| `src/pages/Login.js` | Complete landing page redesign: two-column hero with live tournament preview card (fetches from public API), feature section, trust signals, removed fake stats bar |
+| `src/pages/Login.js` | Complete landing page redesign: two-column hero with live tournament preview card (fetches from public API), feature section, trust signals, removed fake stats bar, Discord invite link |
 | `src/pages/Dashboard.js` | Premium player rank card, stat grid, tournament list, skeleton loading |
 | `src/pages/Tournaments.js` | Premium tournament cards with stage badges, prize display, progress bars, countdown timers |
-| `src/pages/MatchPage.js` | Full live match interface: VS arena, animated chat panel, report/result system, staff tools, profile modals |
+| `src/pages/MatchPage.js` | Full live match interface: VS arena, smart chat scroll (new messages button instead of force-scroll), spectator mode (read-only view for shared links), staff tools, profile modals |
 | `src/pages/CurrentGame.js` | VS area layout, player cards, no-game fallback |
 | `src/pages/Account.js` | Epic verification with update button (removed Epic ID field — only Epic Games Username needed), 7-day cooldown enforcement |
-| `src/pages/MatchHistoryPage.js` | Filterable match list with detail modal, proper Discord avatar display |
-| `src/pages/AdminDashboard.js` | (CSS only) All missing sidebar classes added to match JSX, staff notification dropdown, status badges, dashboard tab components |
+| `src/pages/MatchHistoryPage.js` | Pagination (10 per page), enhanced match detail modal (player votes, full chat logs, evidence, full info) |
+| `src/pages/AdminDashboard.js` | Redesigned Anticheat tab (clean cards with severity badges, user info, score, deduplication), removed IP Analysis tab, fixed tournament timezone offset in create form, enhanced match detail modal |
 | `public/index.html` | Title set to "FNT Arena \| 1v1 Tournaments", favicon set to `logo.png` |
 
 ---
@@ -121,18 +122,11 @@ Frontend: React (Create React App)
 
 ## Discord Server Membership
 
-All users **must be a member** of the Discord server to log in. The backend checks guild membership via the `guilds` OAuth scope.
+Users are NOT required to be in the Discord server to log in. The guild check was removed to avoid blocking new users. Role detection (admin/staff) still works for users who ARE in the guild.
 
-**Server invite:** `https://discord.gg/hMA23CEPHZ`
+**Server invite:** `https://discord.gg/hMA23CEPHZ` (for users who want to join)
 
-**How it works:**
-1. User clicks "Sign in with Discord"
-2. Discord OAuth authorizes → backend checks if user is in guild (`DISCORD_GUILD_ID`)
-3. If not a member → redirects to frontend with `?error=not_server_member`
-4. Frontend shows error with a "Join Server" button linking to the invite
-5. User joins server, tries login again → succeeds
-
-**Login page also shows** a "Must be in our Discord server to play — Join here" notice below the login button so users know before they attempt login.
+**Login page** shows a Discord invite link below the login button.
 
 ---
 
