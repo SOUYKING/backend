@@ -660,7 +660,7 @@ router.get('/matches', async (req, res) => {
 
     const [matches, total] = await Promise.all([
       Match.find(query)
-        .populate('player1 player2', 'discordName discordAvatar epicGamesName rankingPoints')
+        .populate('player1 player2', 'discordId discordName discordAvatar epicGamesName rankingPoints')
         .sort({ date: -1 })
         .skip((page - 1) * limit)
         .limit(parseInt(limit)),
