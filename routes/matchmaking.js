@@ -17,9 +17,16 @@ router.post('/join', authenticate, async (req, res) => {
     const startDate = new Date(tournament.startDate);
     const endDate = new Date(tournament.endDate);
 
-    // Check if queue is open (between startDate and endDate)
+    // Check if queue is open (between startDate and endDate), with small grace for timezone drift
+    const END_GRACE_MS = 6 * 60 * 60 * 1000;
+    if (tournament.status === 'cancelled') return res.status(400).json({ message: 'Tournament is cancelled' });
     if (now < startDate) return res.status(400).json({ message: `Tournament queue starts at ${startDate.toLocaleTimeString()}` });
-    if (now > endDate) return res.status(400).json({ message: 'Tournament has ended' });
+    if (now.getTime() > endDate.getTime() + END_GRACE_MS) return res.status(400).json({ message: 'Tournament has ended' });
+
+    if (tournament.status !== 'active') {
+      tournament.status = 'active';
+      await tournament.save();
+    }
 
     const user = await User.findOne({ discordId: req.user.id });
     if (!user) return res.status(404).json({ message: 'User not found' });

@@ -183,11 +183,18 @@ io.on('connection', (socket) => {
       }
 
       const now = new Date();
-      if (now < new Date(tournament.startDate)) {
+      const startDate = new Date(tournament.startDate);
+      const endDate = new Date(tournament.endDate);
+      const END_GRACE_MS = 6 * 60 * 60 * 1000; // tolerate timezone-drifted end times
+
+      if (tournament.status === 'cancelled') {
+        return socket.emit('error', { message: 'Tournament is cancelled' });
+      }
+      if (now < startDate) {
         return socket.emit('error', { message: 'Tournament has not started yet' });
       }
-      if (now > new Date(tournament.endDate) || tournament.status === 'completed' || tournament.status === 'cancelled') {
-        return socket.emit('error', { message: 'Tournament is no longer active' });
+      if (now.getTime() > endDate.getTime() + END_GRACE_MS) {
+        return socket.emit('error', { message: 'Tournament has ended' });
       }
 
       if (!user.epicVerified) {

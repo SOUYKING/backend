@@ -276,6 +276,7 @@ router.post('/:id/join', authenticate, async (req, res) => {
     const now = new Date();
     const startDate = new Date(tournament.startDate);
     const endDate = new Date(tournament.endDate);
+    const END_GRACE_MS = 6 * 60 * 60 * 1000;
 
     if (tournament.status === 'cancelled') {
       return res.status(400).json({ message: 'Tournament is cancelled' });
@@ -284,7 +285,7 @@ router.post('/:id/join', authenticate, async (req, res) => {
     if (now < startDate) {
       return res.status(400).json({ message: `Tournament queue opens at ${startDate.toLocaleString()}`, queueOpensAt: startDate });
     }
-    if (now > endDate) {
+    if (now.getTime() > endDate.getTime() + END_GRACE_MS) {
       return res.status(400).json({ message: 'Tournament has ended' });
     }
 
