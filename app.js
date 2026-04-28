@@ -81,14 +81,37 @@ const chatRateLimits = new Map();
 const MESSAGE_COOLDOWN_MS = 1500;
 const MAX_MESSAGES_PER_MINUTE = 20;
 
+// Track which match rooms each socket has joined and their role in each room
+// socketId -> Map(matchId -> { role: 'player'|'staff'|'viewer', joinedAt: timestamp })
+const socketMatchRooms = new Map();
+
 function ensureJoinedRoom(socket, roomId) {
   if (!roomId) return false;
   if (socket.rooms.has(roomId)) {
-    console.log(`[ROOM_ALREADY_JOINED] ${socket.id} already in room ${roomId}`);
     return false;
   }
   socket.join(roomId);
   return true;
+}
+
+function getSocketRoleInMatch(socketId, matchId) {
+  return socketMatchRooms.get(socketId)?.get(matchId)?.role || null;
+}
+
+function isSocketInMatchRoom(socketId, matchId) {
+  const rooms = socketMatchRooms.get(socketId);
+  return rooms ? rooms.has(matchId) : false;
+}
+
+function trackSocketJoin(socketId, matchId, role) {
+  if (!socketMatchRooms.has(socketId)) {
+    socketMatchRooms.set(socketId, new Map());
+  }
+  socketMatchRooms.get(socketId).set(matchId, { role, joinedAt: Date.now() });
+}
+
+function cleanupSocketRooms(socketId) {
+  socketMatchRooms.delete(socketId);
 }
 
 function checkChatSpam(userId) {
@@ -251,92 +274,66 @@ io.on('connection', (socket) => {
   socket.on('joinMatch', ({ matchId, playerName }) => {
     if (!matchId) return;
 
-    const isNewJoin = ensureJoinedRoom(socket, matchId);
-    if (isNewJoin) {
-      console.log(`👤 ${socket.id} (${playerName || 'unknown'}) joined match room: ${matchId}`);
+    const activeMatch = GameEngine.getActiveMatch(matchId);
+    if (!activeMatch) return;
+
+    // Verify this socket's user is actually a participant in this match
+    if (!socket.userId || (socket.userId !== activeMatch.player1.userId && socket.userId !== activeMatch.player2.userId)) {
+      // Not a participant — silently redirect to viewer mode
+      socket.emit('joinMatchAsViewer', { matchId, viewerName: playerName || 'Viewer' });
+      return;
     }
 
-    const activeMatch = GameEngine.getActiveMatch(matchId);
-    if (activeMatch) {
-      activeMatch.joinedPlayers = activeMatch.joinedPlayers || new Set();
-      activeMatch.chatLogs = activeMatch.chatLogs || [];
+    const isNewJoin = ensureJoinedRoom(socket, matchId);
+    trackSocketJoin(socket.id, matchId, 'player');
 
-      let joinKey = null;
-      if (socket.userId) {
-        joinKey = socket.userId;
-      } else if (playerName) {
-        if (playerName === activeMatch.player1.username || playerName === activeMatch.player1.epicName) {
-          joinKey = activeMatch.player1.userId;
-        } else if (playerName === activeMatch.player2.username || playerName === activeMatch.player2.epicName) {
-          joinKey = activeMatch.player2.userId;
-        }
-      }
-      if (joinKey) {
-        activeMatch.joinedPlayers.add(joinKey);
-      }
+    console.log(`👤 ${socket.id} (${playerName || 'unknown'}) joined match room as PLAYER: ${matchId}`);
 
-      if (isNewJoin) {
-        if (activeMatch.joinedPlayers.size >= 2 && !activeMatch._bothJoinedMsgSent) {
-          activeMatch._bothJoinedMsgSent = true;
-          const timeStr = new Date().toISOString();
-          const msg = {
-            sender: 'System',
-            message: `✅ Both players are now in the match — ${activeMatch.player1.username} vs ${activeMatch.player2.username}. Match started at ${new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}.`,
-            time: timeStr,
-            isSystem: true,
-          };
-          eventBus.emit('receiveMessage', { ...msg, matchId }, { targets: [`match:${matchId}`], source: 'chat' });
-          activeMatch.chatLogs.push({ ...msg, time: new Date(msg.time) });
-        } else if (playerName && !activeMatch._bothJoinedMsgSent) {
-          const timeStr = new Date().toISOString();
-          const msg = {
-            sender: 'System',
-            message: `🔵 ${playerName} joined the match room at ${new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}.`,
-            time: timeStr,
-            isSystem: true,
-          };
-          eventBus.emit('receiveMessage', { ...msg, matchId }, { targets: [`match:${matchId}`], source: 'chat' });
-          activeMatch.chatLogs.push({ ...msg, time: new Date(msg.time) });
-        }
+    activeMatch.joinedPlayers = activeMatch.joinedPlayers || new Set();
+    activeMatch.chatLogs = activeMatch.chatLogs || [];
+
+    activeMatch.joinedPlayers.add(socket.userId);
+
+    if (isNewJoin) {
+      if (activeMatch.joinedPlayers.size >= 2 && !activeMatch._bothJoinedMsgSent) {
+        activeMatch._bothJoinedMsgSent = true;
+        const timeStr = new Date().toISOString();
+        const msg = {
+          sender: 'System',
+          message: `✅ Both players are now in the match — ${activeMatch.player1.username} vs ${activeMatch.player2.username}. Match started at ${new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}.`,
+          time: timeStr,
+          isSystem: true,
+        };
+        eventBus.emit('receiveMessage', { ...msg, matchId }, { targets: [`match:${matchId}`], source: 'chat' });
+        activeMatch.chatLogs.push({ ...msg, time: new Date(msg.time) });
+      } else if (!activeMatch._bothJoinedMsgSent) {
+        const timeStr = new Date().toISOString();
+        const msg = {
+          sender: 'System',
+          message: `🔵 ${playerName} joined the match room at ${new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}.`,
+          time: timeStr,
+          isSystem: true,
+        };
+        eventBus.emit('receiveMessage', { ...msg, matchId }, { targets: [`match:${matchId}`], source: 'chat' });
+        activeMatch.chatLogs.push({ ...msg, time: new Date(msg.time) });
       }
     }
   });
 
-  socket.on('sendMessage', async ({ matchId, message, sender }) => {
-    if (matchId && message && sender) {
-      const spamCheck = checkChatSpam(socket.userId || sender);
-      if (!spamCheck.allowed) {
-        return socket.emit('chatError', { message: spamCheck.reason });
-      }
+  socket.on('joinMatchAsViewer', ({ matchId, viewerName }) => {
+    if (!matchId) return;
 
-      try {
-        const User = require('./models/User');
-        const user = await User.findOne({ discordId: socket.userId || sender });
-        if (user && user.mutedUntil && new Date(user.mutedUntil) > new Date()) {
-          return socket.emit('chatError', { message: 'You are muted and cannot send messages.' });
-        }
-      } catch (e) {}
+    const isNewJoin = ensureJoinedRoom(socket, matchId);
+    trackSocketJoin(socket.id, matchId, 'viewer');
 
-      const hasProfanity = containsProfanity(message);
-      const finalMessage = hasProfanity ? filterProfanity(message) : message;
-
-      let senderRole = 'player';
-      if (socket.userId) {
-        try {
-          const User = require('./models/User');
-          const u = await User.findOne({ discordId: socket.userId }).select('role');
-          if (u) senderRole = u.role || 'player';
-        } catch (e) {}
-      }
-
+    if (isNewJoin) {
+      console.log(`👁️ ${socket.id} (${viewerName || 'unknown'}) joined match room as VIEWER: ${matchId}`);
       const msg = {
-        sender,
-        message: finalMessage,
+        sender: 'System',
+        message: `👁️ ${viewerName || 'A viewer'} joined as spectator.`,
         time: new Date().toISOString(),
-        isSystem: false,
-        role: senderRole,
+        isSystem: true,
       };
-
       eventBus.emit('receiveMessage', { ...msg, matchId }, { targets: [`match:${matchId}`], source: 'chat' });
 
       const activeMatch = GameEngine.getActiveMatch(matchId);
@@ -344,10 +341,66 @@ io.on('connection', (socket) => {
         activeMatch.chatLogs = activeMatch.chatLogs || [];
         activeMatch.chatLogs.push({ ...msg, time: new Date(msg.time) });
       }
+    }
+  });
 
-      if (hasProfanity) {
-        socket.emit('chatWarning', { message: 'Your message contained inappropriate language and was filtered.' });
+  socket.on('sendMessage', async ({ matchId, message, sender }) => {
+    if (!matchId || !message || !sender) return;
+
+    // Check this socket is actually in the match room
+    if (!isSocketInMatchRoom(socket.id, matchId)) {
+      return socket.emit('chatError', { message: 'You must join the match room first.' });
+    }
+
+    const role = getSocketRoleInMatch(socket.id, matchId);
+    // Viewers cannot send chat messages
+    if (role === 'viewer') {
+      return socket.emit('chatError', { message: 'Spectators cannot send messages.' });
+    }
+
+    const spamCheck = checkChatSpam(socket.userId || sender);
+    if (!spamCheck.allowed) {
+      return socket.emit('chatError', { message: spamCheck.reason });
+    }
+
+    try {
+      const User = require('./models/User');
+      const user = await User.findOne({ discordId: socket.userId || sender });
+      if (user && user.mutedUntil && new Date(user.mutedUntil) > new Date()) {
+        return socket.emit('chatError', { message: 'You are muted and cannot send messages.' });
       }
+    } catch (e) {}
+
+    const hasProfanity = containsProfanity(message);
+    const finalMessage = hasProfanity ? filterProfanity(message) : message;
+
+    let senderRole = 'player';
+    if (socket.userId) {
+      try {
+        const User = require('./models/User');
+        const u = await User.findOne({ discordId: socket.userId }).select('role');
+        if (u) senderRole = u.role || 'player';
+      } catch (e) {}
+    }
+
+    const msg = {
+      sender,
+      message: finalMessage,
+      time: new Date().toISOString(),
+      isSystem: false,
+      role: senderRole,
+    };
+
+    eventBus.emit('receiveMessage', { ...msg, matchId }, { targets: [`match:${matchId}`], source: 'chat' });
+
+    const activeMatch = GameEngine.getActiveMatch(matchId);
+    if (activeMatch) {
+      activeMatch.chatLogs = activeMatch.chatLogs || [];
+      activeMatch.chatLogs.push({ ...msg, time: new Date(msg.time) });
+    }
+
+    if (hasProfanity) {
+      socket.emit('chatWarning', { message: 'Your message contained inappropriate language and was filtered.' });
     }
   });
 
@@ -383,6 +436,13 @@ io.on('connection', (socket) => {
 
   socket.on('callStaff', async ({ matchId, callerName, reason }) => {
     if (!matchId) return;
+
+    const role = getSocketRoleInMatch(socket.id, matchId);
+    // Only players (not viewers) can call for staff
+    if (!role || role === 'viewer') {
+      return socket.emit('chatError', { message: 'Only match participants can call for staff.' });
+    }
+
     try {
       const StaffNotificationModel = require('./models/StaffNotification');
       const notification = new StaffNotificationModel({
@@ -415,7 +475,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('staffJoinMatch', async ({ matchId, staffName }) => {
+socket.on('staffJoinMatch', async ({ matchId, staffName }) => {
     if (!matchId) return;
     try {
       const User = require('./models/User');
@@ -427,6 +487,8 @@ io.on('connection', (socket) => {
     }
 
     const isNewJoin = ensureJoinedRoom(socket, matchId);
+    trackSocketJoin(socket.id, matchId, 'staff');
+
     if (isNewJoin) {
       const msg = {
         sender: 'System',
@@ -439,11 +501,49 @@ io.on('connection', (socket) => {
     socket.emit('staffJoinedMatch', { message: 'You joined the match as staff.' });
   });
 
+  socket.on('reportMessage', async ({ matchId, reportedUserId, reportedUserName, message, reason }) => {
+    if (!matchId || !reportedUserId || !message) return;
+
+    // Only participants can report messages
+    const role = getSocketRoleInMatch(socket.id, matchId);
+    if (!role || role === 'viewer') {
+      return socket.emit('chatError', { message: 'Only match participants can report messages.' });
+    }
+
+    try {
+      const ChatReport = require('./models/ChatReport');
+      await ChatReport.create({
+        matchId,
+        reportedPlayerDiscordId: reportedUserId,
+        reportedPlayerName: reportedUserName || 'Unknown',
+        reporterDiscordId: socket.userId || 'Unknown',
+        reporterName: socket.userId || 'Unknown',
+        message,
+        reason: reason || 'Inappropriate message',
+      });
+
+      const StaffNotification = require('./models/StaffNotification');
+      await StaffNotification.create({
+        type: 'system',
+        matchId,
+        title: '🚨 Chat Report',
+        message: `Player reported for message: "${message.substring(0, 100)}". Reporter: ${socket.userId}`,
+      });
+
+      socket.emit('reportSubmitted', { message: 'Report submitted. Staff will review.' });
+      console.log(`🚨 Chat report submitted in match ${matchId}`);
+      eventBus.emit('admin:report-submitted', { matchId, reportedUserId, reportedUserName, reason: reason || 'Inappropriate message' }, { source: 'chat' });
+    } catch (err) {
+      console.error('Report message error:', err);
+    }
+  });
+
   socket.on('disconnect', () => {
     console.log(`🔴 Disconnected: ${socket.id}`);
     if (socket.userId) {
       GameEngine.leaveQueue(socket.userId);
     }
+    cleanupSocketRooms(socket.id);
   });
 });
 
