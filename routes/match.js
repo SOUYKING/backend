@@ -263,17 +263,33 @@ router.get('/current', authenticate, async (req, res) => {
 // MATCH CHAT
 // ──────────────────────────────────────────────
 
+// Active match chat — any authenticated user can view (staff, player, or spectator)
+router.get('/:matchId/match-chat', authenticate, async (req, res) => {
+  try {
+    const activeMatch = GameEngine.getActiveMatch(req.params.matchId);
+    if (activeMatch) {
+      return res.json({ chatLogs: activeMatch.chatLogs || [] });
+    }
+    const match = await Match.findById(req.params.matchId).select('chatLogs');
+    if (!match) return res.status(404).json({ message: 'Match not found' });
+    res.json({ chatLogs: match.chatLogs || [] });
+  } catch (error) {
+    console.error('Error fetching match chat:', error);
+    res.status(500).json({ message: 'Failed to fetch match chat' });
+  }
+});
+
+// Stored match chat — requires authentication (kept for legacy compatibility)
 router.get('/:matchId/chat', authenticate, async (req, res) => {
   try {
-    const user = await User.findOne({ discordId: req.user.id });
-    if (!user) return res.status(404).json({ message: 'User not found' });
-
+    const activeMatch = GameEngine.getActiveMatch(req.params.matchId);
+    if (activeMatch) {
+      return res.json({ chatLogs: activeMatch.chatLogs || [] });
+    }
     const match = await Match.findById(req.params.matchId);
     if (!match) return res.status(404).json({ message: 'Match not found' });
-
-    const isParticipant = String(match.player1) === String(user._id) || String(match.player2) === String(user._id);
+    const isParticipant = String(match.player1) === String(req.user?._id) || String(match.player2) === String(req.user?._id);
     const isStaff = req.user.role === 'admin' || req.user.role === 'owner' || req.user.role === 'staff';
-
     if (!isParticipant && !isStaff) return res.status(403).json({ message: 'Not authorized to view this chat' });
     res.json({ chatLogs: match.chatLogs || [] });
   } catch (error) {

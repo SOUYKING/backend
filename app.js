@@ -295,6 +295,11 @@ io.on('connection', (socket) => {
     activeMatch.joinedPlayers.add(socket.userId);
 
     if (isNewJoin) {
+      // Send previous chat history to the joining player
+      if (activeMatch.chatLogs && activeMatch.chatLogs.length > 0) {
+        socket.emit('chatHistory', { chatLogs: activeMatch.chatLogs });
+      }
+
       if (activeMatch.joinedPlayers.size >= 2 && !activeMatch._bothJoinedMsgSent) {
         activeMatch._bothJoinedMsgSent = true;
         const timeStr = new Date().toISOString();
@@ -328,17 +333,21 @@ io.on('connection', (socket) => {
 
     if (isNewJoin) {
       console.log(`👁️ ${socket.id} (${viewerName || 'unknown'}) joined match room as VIEWER: ${matchId}`);
-      const msg = {
-        sender: 'System',
-        message: `👁️ ${viewerName || 'A viewer'} joined as spectator.`,
-        time: new Date().toISOString(),
-        isSystem: true,
-      };
-      eventBus.emit('receiveMessage', { ...msg, matchId }, { targets: [`match:${matchId}`], source: 'chat' });
 
       const activeMatch = GameEngine.getActiveMatch(matchId);
       if (activeMatch) {
         activeMatch.chatLogs = activeMatch.chatLogs || [];
+        // Send previous chat history to the viewer
+        if (activeMatch.chatLogs.length > 0) {
+          socket.emit('chatHistory', { chatLogs: activeMatch.chatLogs });
+        }
+        const msg = {
+          sender: 'System',
+          message: `👁️ ${viewerName || 'A viewer'} joined as spectator.`,
+          time: new Date().toISOString(),
+          isSystem: true,
+        };
+        eventBus.emit('receiveMessage', { ...msg, matchId }, { targets: [`match:${matchId}`], source: 'chat' });
         activeMatch.chatLogs.push({ ...msg, time: new Date(msg.time) });
       }
     }
@@ -490,6 +499,11 @@ socket.on('staffJoinMatch', async ({ matchId, staffName }) => {
     trackSocketJoin(socket.id, matchId, 'staff');
 
     if (isNewJoin) {
+      const activeMatch = GameEngine.getActiveMatch(matchId);
+      if (activeMatch && activeMatch.chatLogs && activeMatch.chatLogs.length > 0) {
+        socket.emit('chatHistory', { chatLogs: activeMatch.chatLogs });
+      }
+
       const msg = {
         sender: 'System',
         message: `🛡️ Staff ${staffName || 'member'} joined the match room.`,
