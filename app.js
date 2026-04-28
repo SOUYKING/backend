@@ -413,36 +413,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('reportMessage', async ({ matchId, reportedUserId, reportedUserName, message, reason }) => {
-    if (!matchId || !reportedUserId || !message) return;
-    try {
-      const ChatReport = require('./models/ChatReport');
-      await ChatReport.create({
-        matchId,
-        reportedPlayerDiscordId: reportedUserId,
-        reportedPlayerName: reportedUserName || 'Unknown',
-        reporterDiscordId: socket.userId || 'Unknown',
-        reporterName: socket.userId || 'Unknown',
-        message,
-        reason: reason || 'Inappropriate message',
-      });
-
-      const StaffNotification = require('./models/StaffNotification');
-      await StaffNotification.create({
-        type: 'system',
-        matchId,
-        title: '🚨 Chat Report',
-        message: `Player reported for message: "${message.substring(0, 100)}". Reporter: ${socket.userId}`,
-      });
-
-      socket.emit('reportSubmitted', { message: 'Report submitted. Staff will review.' });
-      console.log(`🚨 Chat report submitted in match ${matchId}`);
-      eventBus.emit('admin:report-submitted', { matchId, reportedUserId, reportedUserName, reason: reason || 'Inappropriate message' }, { source: 'chat' });
-    } catch (err) {
-      console.error('Report message error:', err);
-    }
-  });
-
   socket.on('callStaff', async ({ matchId, callerName, reason }) => {
     if (!matchId) return;
 

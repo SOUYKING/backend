@@ -159,7 +159,7 @@ router.post('/:matchId/resolve', authenticate, async (req, res) => {
       adminName: req.user.username || req.user.discordName || 'Unknown',
       action: 'force_win',
       targetId: winnerDiscordId,
-      targetName: result.match?.winnerDiscordId || 'Unknown',
+      targetName: result.match?.winnerName || winnerDiscordId || 'Unknown',
       matchId,
       reason: reason || 'Staff resolved dispute',
     });
@@ -288,7 +288,10 @@ router.get('/:matchId/chat', authenticate, async (req, res) => {
     }
     const match = await Match.findById(req.params.matchId);
     if (!match) return res.status(404).json({ message: 'Match not found' });
-    const isParticipant = String(match.player1) === String(req.user?._id) || String(match.player2) === String(req.user?._id);
+    const requestingUser = await User.findOne({ discordId: req.user.id }).select('_id');
+    const isParticipant = requestingUser
+      ? String(match.player1) === String(requestingUser._id) || String(match.player2) === String(requestingUser._id)
+      : false;
     const isStaff = req.user.role === 'admin' || req.user.role === 'owner' || req.user.role === 'staff';
     if (!isParticipant && !isStaff) return res.status(403).json({ message: 'Not authorized to view this chat' });
     res.json({ chatLogs: match.chatLogs || [] });

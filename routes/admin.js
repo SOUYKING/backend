@@ -314,10 +314,11 @@ router.post('/users/:discordId/update-role', async (req, res) => {
       return res.status(400).json({ message: 'Invalid role' });
     }
 
+    const oldRole = user.role;
     user.role = role;
     await user.save();
 
-    await logAction(req, 'update_role', user.discordId, user.discordName, { oldRole: user.role, newRole: role });
+    await logAction(req, 'update_role', user.discordId, user.discordName, { oldRole, newRole: role });
 
     res.json({ message: 'Role updated successfully', role });
   } catch (error) {
