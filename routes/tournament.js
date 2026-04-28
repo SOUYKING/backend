@@ -110,27 +110,22 @@ router.post('/', authenticate, async (req, res) => {
     type,
     startDate,
     endDate,
-    registrationDeadline,
     maxPlayers,
     minSkillRating,
     maxSkillRating,
     prize
   } = req.body;
 
-  if (!title || !description || !mapCode || !rules || !startDate || !endDate || !registrationDeadline) {
+  if (!title || !description || !mapCode || !rules || !startDate || !endDate) {
     return res.status(400).json({ message: 'Missing required fields' });
   }
 
   try {
     const parsedStartDate = new Date(startDate);
     const parsedEndDate = new Date(endDate);
-    const parsedRegistrationDeadline = new Date(registrationDeadline);
 
     if (parsedStartDate >= parsedEndDate) {
       return res.status(400).json({ message: 'Start date must be before end date' });
-    }
-    if (parsedRegistrationDeadline > parsedStartDate) {
-      return res.status(400).json({ message: 'Registration deadline must be before or at start date' });
     }
 
     const tournament = new Tournament({
@@ -143,7 +138,6 @@ router.post('/', authenticate, async (req, res) => {
       type: type || '1v1',
       startDate: parsedStartDate,
       endDate: parsedEndDate,
-      registrationDeadline: parsedRegistrationDeadline,
       maxPlayers: maxPlayers || 16,
       minSkillRating: minSkillRating || 0,
       maxSkillRating: maxSkillRating || 3000,
@@ -208,12 +202,8 @@ router.put('/:id', authenticate, async (req, res) => {
     if (type) tournament.type = type;
     if (startDate) tournament.startDate = new Date(startDate);
     if (endDate) tournament.endDate = new Date(endDate);
-    if (registrationDeadline) tournament.registrationDeadline = new Date(registrationDeadline);
     if (new Date(tournament.startDate) >= new Date(tournament.endDate)) {
       return res.status(400).json({ message: 'Start date must be before end date' });
-    }
-    if (new Date(tournament.registrationDeadline) > new Date(tournament.startDate)) {
-      return res.status(400).json({ message: 'Registration deadline must be before or at start date' });
     }
 
     if (maxPlayers) tournament.maxPlayers = maxPlayers;
@@ -276,7 +266,7 @@ router.post('/:id/activate', authenticate, async (req, res) => {
   }
 });
 
-// Join tournament
+// Join tournament (pre-registration - now redirects to queue info)
 router.post('/:id/join', authenticate, async (req, res) => {
   try {
     const tournament = await Tournament.findById(req.params.id);
@@ -285,60 +275,54 @@ router.post('/:id/join', authenticate, async (req, res) => {
     }
 
     if (tournament.status === 'cancelled' || tournament.status === 'completed') {
-      return res.status(400).json({ message: 'Tournament is not accepting registrations' });
+      return res.status(400).json({ message: 'Tournament is not active' });
     }
 
     const now = new Date();
-    if (now > tournament.registrationDeadline) {
-      return res.status(400).json({ message: 'Registration deadline has passed' });
-    }
-    if (now >= tournament.startDate) {
-      return res.status(400).json({ message: 'Tournament has already started. Registration is closed.' });
-    }
+    const startDate = new Date(tournament.startDate);
+    const endDate = new Date(tournament.endDate);
 
-    if (tournament.participants.length >= tournament.maxPlayers) {
-      return res.status(400).json({ message: 'Tournament is full' });
+    if (now < startDate) {
+      return res.status(400).json({ message: `Tournament queue opens at ${startDate.toLocaleString()}`, queueOpensAt: startDate });
     }
-
-    const alreadyRegistered = tournament.participants.some(p => p.userId === req.user.id);
-    if (alreadyRegistered) {
-      return res.status(400).json({ message: 'You are already registered for this tournament' });
+    if (now > endDate) {
+      return res.status(400).json({ message: 'Tournament has ended' });
     }
 
     const user = await User.findOne({ discordId: req.user.id });
     if (!user) {
-      return res.status(404).json({ message: 'User not found. Please logout and login again.' });
+      return res.status(404).json({ message: 'User not found' });
     }
-
     if (user.isBanned) {
       return res.status(403).json({ message: user.banReason || 'Your account is banned.' });
     }
-
     if (!user.epicVerified) {
       return res.status(403).json({ message: 'You must verify your Epic Games account to join tournaments' });
     }
 
-    tournament.participants.push({
-      userId: req.user.id,
-      discordName: req.user.username,
-      rankingPoints: user.rankingPoints,
-      epicName: user.epicGamesName,
-      registeredAt: new Date(),
-    });
+    const alreadyRegistered = tournament.participants.some(p => p.userId === req.user.id);
+    if (!alreadyRegistered) {
+      tournament.participants.push({
+        userId: req.user.id,
+        discordName: req.user.username,
+        rankingPoints: user.rankingPoints,
+        epicName: user.epicGamesName,
+        registeredAt: new Date(),
+      });
+      tournament.leaderboard.push({
+        userId: req.user.id,
+        discordId: req.user.id,
+        discordName: req.user.username,
+        discordAvatar: user.discordAvatar || null,
+        wins: 0,
+        losses: 0,
+        points: 0,
+      });
+      await tournament.save();
+    }
 
-    tournament.leaderboard.push({
-      userId: req.user.id,
-      discordId: req.user.id,
-      discordName: req.user.username,
-      discordAvatar: user.discordAvatar || null,
-      wins: 0,
-      losses: 0,
-      points: 0,
-    });
-
-    await tournament.save();
     console.log(`✅ ${req.user.username} joined tournament: ${tournament.title}`);
-    res.json({ message: 'Successfully joined tournament!', tournament });
+    res.json({ message: 'Joined tournament! Queue is open — go to the queue page to start matching.', tournament });
   } catch (error) {
     console.error('Error joining tournament:', error.message);
     res.status(500).json({ message: 'Failed to join tournament' });

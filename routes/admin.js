@@ -818,21 +818,16 @@ router.post('/tournaments', async (req, res) => {
       prize
     } = req.body;
 
-    if (!title || !description || !mapCode || !rules || !startDate || !endDate || !registrationDeadline) {
-      return res.status(400).json({ message: 'Missing required fields: title, description, mapCode, rules, startDate, endDate, registrationDeadline' });
+    if (!title || !description || !mapCode || !rules || !startDate || !endDate) {
+      return res.status(400).json({ message: 'Missing required fields: title, description, mapCode, rules, startDate, endDate' });
     }
 
     const parsedStartDate = new Date(startDate);
     const parsedEndDate = new Date(endDate);
-    const parsedRegistrationDeadline = new Date(registrationDeadline);
     const now = new Date();
 
-    if (isNaN(parsedStartDate.getTime()) || isNaN(parsedEndDate.getTime()) || isNaN(parsedRegistrationDeadline.getTime())) {
+    if (isNaN(parsedStartDate.getTime()) || isNaN(parsedEndDate.getTime())) {
       return res.status(400).json({ message: 'Invalid date format' });
-    }
-
-    if (parsedRegistrationDeadline > parsedStartDate) {
-      return res.status(400).json({ message: 'Registration deadline must be before or at start date' });
     }
 
     if (parsedStartDate >= parsedEndDate) {
@@ -849,7 +844,6 @@ router.post('/tournaments', async (req, res) => {
       type: type || '1v1',
       startDate: parsedStartDate,
       endDate: parsedEndDate,
-      registrationDeadline: parsedRegistrationDeadline,
       maxPlayers: maxPlayers || 16,
       minSkillRating: minSkillRating || 0,
       maxSkillRating: maxSkillRating || 3000,
@@ -908,7 +902,6 @@ router.put('/tournaments/:id', async (req, res) => {
     if (type) tournament.type = type;
     if (startDate) tournament.startDate = new Date(startDate);
     if (endDate) tournament.endDate = new Date(endDate);
-    if (registrationDeadline) tournament.registrationDeadline = new Date(registrationDeadline);
     if (maxPlayers) tournament.maxPlayers = maxPlayers;
     if (minSkillRating !== undefined) tournament.minSkillRating = minSkillRating;
     if (maxSkillRating !== undefined) tournament.maxSkillRating = maxSkillRating;
