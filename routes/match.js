@@ -351,20 +351,28 @@ router.get('/:matchId/active-info', authenticate, async (req, res) => {
     const isStaff = req.user.role === 'admin' || req.user.role === 'owner' || req.user.role === 'staff';
     const isParticipant = activeMatch.player1.userId === req.user.id || activeMatch.player2.userId === req.user.id;
 
-    const self = activeMatch.player1.userId === req.user.id ? activeMatch.player1 : activeMatch.player2;
-    const opponent = activeMatch.player1.userId === req.user.id ? activeMatch.player2 : activeMatch.player1;
+    // Staff ALWAYS join as staff/observer, never as a player slot
+    const effectiveIsParticipant = isParticipant && !isStaff;
+    const effectiveIsStaff = isStaff;
+    const effectiveIsSpectator = !effectiveIsParticipant && !effectiveIsStaff;
 
-    const selfUser = isParticipant ? await User.findOne({ discordId: self.userId }).select('discordAvatar rankingPoints') : null;
+    // Only show self for actual players (not staff)
+    const selfPlayer = effectiveIsParticipant ? (activeMatch.player1.userId === req.user.id ? activeMatch.player1 : activeMatch.player2) : null;
+    const opponent = effectiveIsParticipant
+      ? (activeMatch.player1.userId === req.user.id ? activeMatch.player2 : activeMatch.player1)
+      : activeMatch.player1; // staff see player1 as "opponent" reference
+
+    const selfUser = effectiveIsParticipant ? await User.findOne({ discordId: selfPlayer.userId }).select('discordAvatar rankingPoints') : null;
     const oppUser = await User.findOne({ discordId: opponent.userId }).select('discordAvatar rankingPoints');
 
     res.json({
       inMatch: true,
       matchId: activeMatch.matchId,
-      isSpectator: !isParticipant && !isStaff,
-      isStaff,
-      self: isParticipant ? {
-        id: self.userId, username: self.username, epicName: self.epicName,
-        avatar: self.avatar || selfUser?.discordAvatar,
+      isSpectator: effectiveIsSpectator,
+      isStaff: effectiveIsStaff,
+      self: effectiveIsParticipant ? {
+        id: selfPlayer.userId, username: selfPlayer.username, epicName: selfPlayer.epicName,
+        avatar: selfPlayer.avatar || selfUser?.discordAvatar,
       } : null,
       opponent: {
         id: opponent.userId, username: opponent.username, epicName: opponent.epicName,
