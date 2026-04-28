@@ -8,21 +8,19 @@ const getTournamentLifecycle = (tournament) => {
   const now = new Date();
   const startDate = new Date(tournament.startDate);
   const endDate = new Date(tournament.endDate);
-  const registrationDeadline = new Date(tournament.registrationDeadline);
 
-  const registrationOpen = now <= registrationDeadline;
+  // Queue is open from startDate to endDate - anyone can join
   const queueOpen = now >= startDate && now <= endDate;
+  const queueStartsSoon = now < startDate;
 
-  let lifecycleStage = 'registration';
+  let lifecycleStage = 'waiting';
   if (now > endDate || tournament.status === 'completed' || tournament.status === 'cancelled') {
     lifecycleStage = tournament.status === 'cancelled' ? 'cancelled' : 'completed';
   } else if (queueOpen) {
     lifecycleStage = 'active';
-  } else if (!registrationOpen && now < startDate) {
-    lifecycleStage = 'registration_closed';
   }
 
-  return { lifecycleStage, registrationOpen, queueOpen };
+  return { lifecycleStage, queueOpen, queueStartsSoon };
 };
 
 // Get all tournaments
