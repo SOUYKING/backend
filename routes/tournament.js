@@ -185,7 +185,6 @@ router.put('/:id', authenticate, async (req, res) => {
       type,
       startDate,
       endDate,
-      registrationDeadline,
       maxPlayers,
       minSkillRating,
       maxSkillRating,

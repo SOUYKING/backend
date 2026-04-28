@@ -44,7 +44,7 @@ const tournamentSchema = new mongoose.Schema({
   },
   registrationDeadline: {
     type: Date,
-    required: true,
+    default: null,
   },
   maxPlayers: {
     type: Number,
