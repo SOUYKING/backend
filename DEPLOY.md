@@ -1,219 +1,199 @@
-# FNT Arena — Deployment & Setup Guide
+# FNT Arena — Deployment & Current Project State
 
 ## Overview
-Fortnite 1v1 tournament matchmaking platform.  
-Backend: Node.js + Express + Socket.io + MongoDB  
-Frontend: React (Create React App)
+Fortnite tournament matchmaking platform: **1v1**, **2v2**, **3v3**, and **4v4** (squads use the same match lifecycle as solos, with team entities and captain rules).
+
+- Backend: Node.js, Express, Socket.io, MongoDB (Mongoose), JWT, Discord OAuth
+- Frontend: React (CRA), React Router, Socket.io client, Axios
+- Hosting: Render (backend), Vercel (frontend), Namecheap custom domain
 
 ---
 
 ## Repositories
 
 | Component | GitHub URL |
-|-----------|-----------|
-| **Backend** | https://github.com/SOUYKING/backend |
-| **Frontend** | https://github.com/SOUYKING/FRONTEND |
+|---|---|
+| Backend | https://github.com/SOUYKING/backend |
+| Frontend | https://github.com/SOUYKING/FRONTEND |
 
 ---
 
 ## Live URLs
 
 | Service | URL |
-|---------|-----|
-| **Backend (Render)** | https://backend-97zg.onrender.com |
-| **Frontend (Vercel)** | https://frontend-nine-zeta-89.vercel.app |
-| **Custom Domain** | https://fntarena.online (pointed to Vercel via A records) |
+|---|---|
+| Backend | https://backend-97zg.onrender.com |
+| Frontend | https://frontend-nine-zeta-89.vercel.app |
+| Custom Domain | https://fntarena.online |
 
 ---
 
-## Architecture
+## Changelog (recent shipped work)
 
-### Backend (`/backend`)
+Use this section to confirm production matches `main` on both repos after deploy.
 
-**Stack:** Express, Socket.io, Mongoose, JWT, Discord OAuth
+### Squad modes (2v2 / 3v3 / 4v4) — behavior summary
+- **Queue:** Only the **team captain** joins queue (socket `joinQueue` and REST `POST /matchmaking/join`). Team row in memory uses `userId: team:<MongoId>`, `teamMemberIds`, `captainId`, `teamSize`, average RP for pairing.
+- **Matchmaking:** Pairs two queue entries in the **same tournament** (closest average RP), same as 1v1 but each entry can be a full team.
+- **Match room:** Any roster member can `joinMatch`; chat uses expected player count for the “room ready” system message (see backend `expectedMatchRoomPlayers`).
+- **Results:** Only **captains** submit `POST /match/:matchId/result`. Two captain reports → agree, dispute, or auto-resolve (same as 1v1).
+- **Ranking:** `calculatePointsChange(winnerAvg, loserAvg)` uses **average** RP of each side; **every** member gets the same `+winPoints` / `−lossPoints`; per-user rank tiers still come from individual `rankingPoints`. Tournament leaderboard rows update per member. `Team` model gets `statsWins` / `statsLosses` once per match.
+- **Persistence:** Completed `Match` document stores captains as `player1`/`player2` references; full roster already received RP updates in `finishMatch`.
 
-**Key files modified:**
+### Backend (`SOUYKING/backend`, `main`)
+- **`routes/match.js`**
+  - `GET /match/current`: correct User/avatar handling when `userId` is `team:…` (caller + opponent captain lookups).
+  - `GET /match/:matchId/active-info`: `sides`, `teamMatch`, `participantSide`, `isTeamCaptain`, staff/participant detection.
+  - **`POST /match/:matchId/evidence` (active match):** participation uses `isActiveMatchParticipant` so **all teammates** can upload evidence (not only raw `player1.userId` / `player2.userId`).
+  - Helpers: `buildActiveMatchSide`, `isQueueEntityParticipant`, `isActiveMatchParticipant`.
+- **`app.js`**
+  - `expectedMatchRoomPlayers` + squad-aware “all players in room” chat message (waits for full roster count in team modes).
+  - Socket **`register`:** reattaches queue `socketId` for **captain only** when `teamMode` (fixes captain reconnect; avoids teammates overwriting captain socket).
+- **`core/GameEngine.js`:** team queue validation, `submitMatchResult` / `finishMatch` for squads (no change list here — see code).
+- **`routes/matchmaking.js`**, **`routes/teams.js`**, **`app.js` `joinQueue`:** team size, captain, accepted members, locks — aligned with tournament `type`.
 
-| File | Change |
+### Frontend (`SOUYKING/FRONTEND`, `main`)
+- **`utils/api.js`:** `resolveDisplayAvatar` for API URLs vs Discord hashes.
+- **`pages/MatchPage.js` + CSS:** squad layout, `active-info` integration, captain reporting; on match complete clears `localStorage.currentMatchId` and dispatches `current-match-ended`.
+- **`pages/CurrentGame.js` + CSS:** **multiple** registered tournaments (sort: match’s tournament first, then queue-open); squad hints; avatars via `resolveDisplayAvatar`.
+- **`pages/Tournaments.js` + CSS:** `joinTournament` before queue when live; **Registered** badge; squad copy; `getMyRegisteredTournaments` merged into fetch.
+- **`pages/Dashboard.js` + CSS:** `lifecycleStage` filtering; **live match** banner; per-tournament **Queue** links when open.
+- **`pages/QueuePage.js` + CSS:** teammate hint + link to Current Game; team select flow.
+- **`App.js`:** `current-match-ended` listener; improved `matchFound` navigation state (Discord display name from profile).
+- **`components/Sidebar.js` + CSS:** **Live** pill on Current Game when `liveMatchId` set.
+
+### Git references (verify on GitHub if needed)
+- Backend: includes commits such as **team `/current` + room message**, **evidence + register fixes** (e.g. `d069c51` area).
+- Frontend: includes **multi-tournament / join / UX** commits through **live match sidebar + dashboard** (e.g. `a954bef` area).
+
+---
+
+## Current Production Features (Cumulative)
+
+### Core flow
+- Tournaments → register/join queue → match → history; **1v1 and squad tournaments** supported.
+- **Current Game:** multiple open registrations, live match return, squad copy.
+- **Queue:** team selection, captain-only queue, refresh, teammate guidance.
+- **Match page:** roster sides, hub UI, captain result submission, staff/owner tools as implemented.
+
+### Account + match history
+- Account, match history, and admin flows as previously documented (Epic, disputes, staff alerts, etc.).
+
+### Tournaments + dashboard
+- Stage filters, banners, **join tournament** before queue when live, registered badges.
+- Dashboard: active tournaments with queue links, live match banner.
+
+### Background + UI polish
+- Gaming icons background, motion, and related `App.css` / `GamingIcons.js` behavior.
+
+---
+
+## Key Files Reference (high impact)
+
+### Backend
+| File | Notes |
 |------|--------|
-| `app.js` | Server startup log fixed (no hardcoded `localhost`), port retry loop removed, CORS upgraded to support multiple origins (local dev + Render), `trust proxy` enabled, global `unhandledRejection` and `uncaughtException` handlers added |
-| `utils/db.js` | MongoDB connection retry with 5 attempts (5s delay each), no longer crashes on failure, validates `MONGO_URI` is set before connecting, proper timeout options for Atlas, drops old unique indexes on `epicGamesId`/`epicGamesName` on startup |
-| `utils/eventBus.js` | Added dedup cache for `receiveMessage` events (500ms window to block duplicates), suppressed noisy event logging for `receiveMessage` and `admin:stats-update` |
-| `utils/adminSocket.js` | Added `activeAdminConnections` Map to track admin socket IDs, disconnects old socket when same admin reconnects, cleaner disconnect handling |
-| `utils/socketManager.js` | (unchanged) |
-| `core/GameEngine.js` | Removed duplicate `_startMatchmakingLoop()` method, preserved async version |
-| `routes/auth.js` | OAuth callback now auto-constructs `redirect_uri` from request (no longer requires `DISCORD_CALLBACK_URL` env var), improved Discord error logging with status code and response body, added global error handlers, removed Discord guild membership requirement for login |
-| `routes/match.js` | New `GET /match/:matchId/active-info` endpoint — allows any logged-in user to view active match info (spectator mode), removed strict participant check for match detail viewing |
+| `app.js` | Socket: `joinQueue`, `joinMatch`, `register`, match found emit, room-ready message, CORS |
+| `core/GameEngine.js` | Queue, matchmaking, active matches, results, `finishMatch`, RP for full roster |
+| `routes/match.js` | `/current`, `/active-info`, evidence, history, dispute resolve |
+| `routes/matchmaking.js` | REST queue join (solo + team) |
+| `routes/tournament.js` | Lifecycle, join/leave, mine/registered |
+| `routes/teams.js` | Teams API |
+| `utils/rankSystem.js` | `getRank`, `calculatePointsChange` |
 
-### Frontend (`/frontend`)
-
-**Stack:** React 18, React Router 6, Socket.io Client, Axios
-
-**Key files modified:**
-
-| File | Change |
+### Frontend
+| File | Notes |
 |------|--------|
-| `src/App.js` | Restructured with `AuthenticatedApp` component inside `<Router>` to enable `useNavigate()`, all `window.location.href` replaced with `navigate()`, socket event handlers use named functions for proper cleanup |
-| `src/index.css` | Full design system: CSS variables, glassmorphism utilities, neon glow effects, skeleton loaders, page transitions, Orbitron/Inter/JetBrains Mono fonts, premium buttons and cards, `#0a0a0a` dark background |
-| `src/App.css` | Animated background with glowing gradient overlay, modal system, notification toasts, form elements, pagination, tabs |
-| `src/utils/api.js` | Production URL auto-detection (checks `window.location.hostname`), defaults to `https://backend-97zg.onrender.com` in production, keeps `localhost:5000` for dev, new `getActiveMatchInfo()` API function |
-| `src/components/GamingIcons.js` | Animated background with real PNG assets (controller/headphone/keyboard/mouse/pistol/rifle/battle) floating in grid with parallax mouse movement, theme-colored CSS tints |
-| `src/components/Sidebar.js` | Added mobile menu toggle with overlay, glassmorphism design |
-| `src/pages/Login.js` | Complete landing page redesign: two-column hero with live tournament preview card (fetches from public API), feature section, trust signals, removed fake stats bar, Discord invite link |
-| `src/pages/Dashboard.js` | Premium player rank card, stat grid, tournament list, skeleton loading |
-| `src/pages/Tournaments.js` | Premium tournament cards with stage badges, prize display, progress bars, countdown timers |
-| `src/pages/MatchPage.js` | Full live match interface: VS arena, smart chat scroll (new messages button instead of force-scroll), spectator mode (read-only view for shared links), staff tools, profile modals |
-| `src/pages/CurrentGame.js` | VS area layout, player cards, no-game fallback |
-| `src/pages/Account.js` | Epic verification with update button (removed Epic ID field — only Epic Games Username needed), 7-day cooldown enforcement |
-| `src/pages/MatchHistoryPage.js` | Pagination (10 per page), enhanced match detail modal (player votes, full chat logs, evidence, full info) |
-| `src/pages/AdminDashboard.js` | Redesigned Anticheat tab (clean cards with severity badges, user info, score, deduplication), removed IP Analysis tab, fixed tournament timezone offset in create form, enhanced match detail modal |
-| `public/index.html` | Title set to "FNT Arena \| 1v1 Tournaments", favicon set to `logo.png` |
+| `App.js` | Auth, socket, `matchFound`, `current-match-ended` |
+| `pages/MatchPage.js` | Live match UI, `getActiveMatchInfo` |
+| `pages/QueuePage.js` | Queue + team select |
+| `pages/CurrentGame.js` | Registrations + live match |
+| `pages/Tournaments.js` | Browse + join |
+| `pages/Dashboard.js` | Home + live banner |
+| `components/Sidebar.js` | Nav + live indicator |
+| `utils/api.js` | HTTP client, `resolveDisplayAvatar` |
 
 ---
 
 ## Environment Variables
 
-### Backend (set in Render Dashboard → Environment)
+Set values in dashboards (Render/Vercel). Do not commit secrets to git.
 
-| Variable | Value | Notes |
-|----------|-------|-------|
-| `MONGO_URI` | `mongodb+srv://souy:king@souy.l3881fj.mongodb.net/fortnite?retryWrites=true&w=majority` | MongoDB Atlas connection string |
-| `DISCORD_CLIENT_ID` | `1256251737938071643` | From Discord Developer Portal |
-| `DISCORD_CLIENT_SECRET` | *(rotated)* | **Must be regenerated — was exposed in conversation** |
-| `DISCORD_CALLBACK_URL` | `https://backend-97zg.onrender.com/auth/callback` | Also registered in Discord OAuth Redirects |
-| `DISCORD_BOT_TOKEN` | *(rotated)* | **Must be regenerated — was exposed in conversation** |
-| `DISCORD_GUILD_ID` | `1255081888377208842` | Discord server ID for membership check |
-| `ADMIN_ROLE_ID` | `1256568436838895688` | |
-| `STAFF_ROLE_ID` | `1256568436838895688` | |
-| `CONTENT_CREATOR_ROLE_ID` | `1256568436838895688` | |
-| `JWT_SECRET` | *(rotated)* | **Must be regenerated — was exposed in conversation** |
-| `OWNER_DISCORD_ID` | `524975380608581644` | Super admin Discord ID |
-| `FRONTEND_URL` | `https://frontend-nine-zeta-89.vercel.app` | Used for CORS and OAuth redirects |
-| `IPINFO_TOKEN` | *(rotated)* | Optional — for IP geolocation in anti-cheat |
+### Backend (Render)
+- `MONGO_URI`
+- `DISCORD_CLIENT_ID`
+- `DISCORD_CLIENT_SECRET`
+- `DISCORD_CALLBACK_URL`
+- `DISCORD_BOT_TOKEN`
+- `DISCORD_GUILD_ID`
+- `ADMIN_ROLE_ID`
+- `STAFF_ROLE_ID`
+- `CONTENT_CREATOR_ROLE_ID`
+- `JWT_SECRET`
+- `OWNER_DISCORD_ID`
+- `FRONTEND_URL`
+- `IPINFO_TOKEN` (optional)
 
-### Frontend (set in Vercel Dashboard → Environment Variables)
-
-| Variable | Value |
-|----------|-------|
-| `REACT_APP_API_URL` | `https://backend-97zg.onrender.com` |
-| `REACT_APP_SOCKET_URL` | `https://backend-97zg.onrender.com` |
-| `REACT_APP_DISCORD_CLIENT_ID` | `1256251737938071643` |
+### Frontend (Vercel)
+- `REACT_APP_API_URL`
+- `REACT_APP_SOCKET_URL`
+- `REACT_APP_DISCORD_CLIENT_ID`
 
 ---
 
-## Discord Developer Portal Configuration
+## Deploy Steps
 
-**URL:** https://discord.com/developers → your app
+### Backend deploy (Render)
+1. Push to `main` in `SOUYKING/backend`.
+2. Render auto-deploys from GitHub.
+3. If needed: Render Dashboard → Manual Deploy → Deploy latest commit.
 
-### OAuth2 → Redirects
-- `https://backend-97zg.onrender.com/auth/callback`
-- `https://frontend-nine-zeta-89.vercel.app`
-- `http://localhost:3000` (for local dev)
+### Frontend deploy (Vercel)
+1. Push to `main` in `SOUYKING/FRONTEND`.
+2. Vercel auto-deploys from GitHub.
+3. Optional manual deploy from `frontend/`: `npx vercel --prod`.
 
-### OAuth2 → General
-- Client ID: `1256251737938071643`
-- Client Secret: *(rotated)*
-
-### Bot
-- Token: *(rotated)*
-- Privileged Gateway Intents: MEMBERS INTENT required for guild member checks
-
----
-
-## Discord Server Membership
-
-Users are NOT required to be in the Discord server to log in. The guild check was removed to avoid blocking new users. Role detection (admin/staff) still works for users who ARE in the guild.
-
-**Server invite:** `https://discord.gg/hMA23CEPHZ` (for users who want to join)
-
-**Login page** shows a Discord invite link below the login button.
+### After deploy checklist
+- Open frontend with `REACT_APP_API_URL` / `REACT_APP_SOCKET_URL` pointing at the deployed backend.
+- Smoke test: login, **1v1 queue**, **2v2** (captain queue, teammate Current Game), match complete, RP/leaderboard row updates.
+- Confirm Render env `FRONTEND_URL` matches the site users use (CORS + OAuth).
 
 ---
 
-## MongoDB Atlas
+## Fresh Session Quick Context
 
-**Cluster:** `souy.l3881fj.mongodb.net`  
-**Database:** `fortnite`  
-**User:** `souy`  
-**Password:** `king` *(should use a stronger password for production)*
-
-### Network Access
-- `0.0.0.0/0` (Allow All) — currently set for development; restrict in production
-
----
-
-## DNS Configuration (Namecheap — fntarena.online)
-
-| Type | Host | Value |
-|------|------|-------|
-| A | `@` | `76.76.21.21` |
-| A | `@` | `76.76.21.98` |
-| CNAME | `www` | `cname.vercel-dns.com` |
+If starting with a new AI/dev session, provide:
+1. Two repos: `SOUYKING/backend`, `SOUYKING/FRONTEND`
+2. Backend URL: `https://backend-97zg.onrender.com`
+3. Frontend URL: `https://frontend-nine-zeta-89.vercel.app`
+4. Domain: `https://fntarena.online`
+5. **This file** is the source of truth for architecture, squad behavior, and recent changes.
 
 ---
 
-## How to Deploy
+## Security Checklist
 
-### Backend Deploy (Render)
-1. Push to `main` branch of `SOUYKING/backend`
-2. Render auto-deploys (connected via GitHub)
-3. Or use **Manual Deploy → Deploy Latest Commit** in Render Dashboard
-
-### Frontend Deploy (Vercel)
-1. Push to `main` branch of `SOUYKING/FRONTEND`
-2. Vercel auto-deploys (connected via GitHub)
-3. Or use `npx vercel --prod` from the `frontend/` directory
-
----
-
-## What To Do If Starting Fresh
-
-If you open a new OpenCode/Claude session and need to reorient:
-
-1. I have two repos: `SOUYKING/backend` and `SOUYKING/FRONTEND`
-2. Backend runs on Render at `https://backend-97zg.onrender.com`
-3. Frontend runs on Vercel at `https://frontend-nine-zeta-89.vercel.app`
-4. Custom domain: `fntarena.online`
-5. MongoDB Atlas: cluster `souy.l3881fj`, database `fortnite`, user `souy`
-6. Discord app ID: `1256251737938071643`
-7. All env vars are set in Render Dashboard and Vercel Dashboard
-8. Secrets marked "rotated" need fresh values from Discord Developer Portal
-9. Read this DEPLOY.md file for complete context
-
----
-
-## Security Notes
-
-### Exposed Secrets (rotate immediately if not already done)
-- `DISCORD_CLIENT_SECRET`: Regenerate at Discord Developer Portal → OAuth2
-- `DISCORD_BOT_TOKEN`: Regenerate at Discord Developer Portal → Bot
-- `JWT_SECRET`: Generate new random 64-char string
-- `IPINFO_TOKEN`: Regenerate at https://ipinfo.io
-
-### .env files
-- `backend/.env` and `frontend/.env` are gitignored and were removed from git history
-- All environment variables should be set via Render/Vercel dashboards, not in .env files on the server
+- Rotate any previously exposed secrets immediately.
+- Keep all secrets only in Render/Vercel environment settings.
+- Never store real credentials/tokens inside `DEPLOY.md` or committed files.
 
 ---
 
 ## Troubleshooting
 
-### Backend crashes with "Exited with status 1"
-- Check Render logs for the error
-- Common causes: MongoDB connection failure, missing env vars, Discord API auth failure
-- The app now has: MongoDB retry logic, unhandled rejection handler, and does not crash on DB failure
+### Login/OAuth issues
+- Confirm callback URL in Discord app matches backend callback route.
+- Check Render logs for OAuth errors and rejected redirects.
 
-### "Invalid redirect_uri" during Discord login
-- The backend auto-constructs the callback URL from the request headers
-- Check Render logs for `Callback URL constructed:` to verify it matches what Discord expects
-- Ensure the callback URL is registered in Discord Developer Portal → OAuth2 → Redirects
+### Queue or match sync issues
+- Verify frontend and backend are both deployed to latest commits.
+- Check socket connection URL and CORS allowlist.
 
-### 502 Bad Gateway
-- Usually means the backend process crashed or timed out
-- Check Render logs for the actual error
-- On free Render tier, requests that take >30s may timeout
+### Squad-specific issues
+- **Teammate can’t join room:** use **Current Game** or direct `/match/:matchId`; captain must have gotten a match; all members must be on `teamMemberIds`.
+- **No match found event for teammate:** expected — only captain’s socket gets `matchFound`; teammates use HTTP `/match/current` or navigation.
+- **Evidence 403:** deploy backend that includes `isActiveMatchParticipant` on active match evidence route.
 
-### MongoDB "Authentication failed"
-- Check that `MONGO_URI` in Render env vars has correct username/password
-- Check MongoDB Atlas → Database Access for user credentials
-- Check MongoDB Atlas → Network Access allows Render's IPs (`0.0.0.0/0` for dev)
+### Data/API mismatch
+- Confirm both repos are on expected versions (`main`) and deployments completed.
+- Rebuild frontend if stale bundle is suspected.
