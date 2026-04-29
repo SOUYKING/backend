@@ -88,7 +88,8 @@ router.post('/leave', authenticate, async (req, res) => {
 
 router.get('/status', authenticate, async (req, res) => {
   try {
-    res.json({ queueSize: GameEngine.getQueueSize() });
+    const tournamentId = req.query.tournamentId || null;
+    res.json({ queueSize: GameEngine.getQueueSize(tournamentId) });
   } catch (error) {
     console.error('Error getting queue status:', error);
     res.status(500).json({ message: 'Failed to get queue status' });
