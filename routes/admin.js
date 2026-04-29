@@ -72,7 +72,7 @@ router.get('/dashboard/stats', async (req, res) => {
     const topPlayers = await User.find({ isBanned: false })
       .sort({ rankingPoints: -1 })
       .limit(10)
-      .select('discordName discordAvatar wins losses rankingPoints totalMatches');
+      .select('discordId discordName discordAvatar wins losses rankingPoints totalMatches');
 
     const matchActivity = await Match.aggregate([
       {
@@ -172,10 +172,11 @@ router.get('/users/:discordId', async (req, res) => {
     }
 
     const userMatches = await Match.find({
-      $or: [{ player1DiscordId: user.discordId }, { player2DiscordId: user.discordId }]
+      $or: [{ player1: user._id }, { player2: user._id }]
     })
       .sort({ date: -1 })
-      .limit(50);
+      .limit(50)
+      .populate('player1 player2', 'discordId discordName discordAvatar');
 
     const relatedAccounts = await User.find({
       $or: [
@@ -703,37 +704,82 @@ router.post('/matches/:matchId/override', async (req, res) => {
     match.result = winner;
     match.disputed = false;
     match.status = 'completed';
+    if (!['player1', 'player2', 'draw'].includes(winner)) {
+      return res.status(400).json({ message: 'winner must be player1, player2, or draw' });
+    }
+
+    const p1 = match.player1;
+    const p2 = match.player2;
+    if (!p1 || !p2) {
+      return res.status(400).json({ message: 'Match players are missing' });
+    }
+
+    const clamp = (value) => Math.max(0, value || 0);
+    const adjustWinLoss = (winnerUser, loserUser, direction) => {
+      const pointsChange = calculatePointsChange(clamp(winnerUser.rankingPoints), clamp(loserUser.rankingPoints));
+      winnerUser.rankingPoints = clamp((winnerUser.rankingPoints || 0) + (direction * pointsChange.winPoints));
+      loserUser.rankingPoints = clamp((loserUser.rankingPoints || 0) - (direction * pointsChange.lossPoints));
+      winnerUser.wins = clamp((winnerUser.wins || 0) + direction);
+      loserUser.losses = clamp((loserUser.losses || 0) + direction);
+      winnerUser.totalMatches = clamp((winnerUser.totalMatches || 0) + direction);
+      loserUser.totalMatches = clamp((loserUser.totalMatches || 0) + direction);
+    };
+    const adjustDraw = (a, b, direction) => {
+      a.draws = clamp((a.draws || 0) + direction);
+      b.draws = clamp((b.draws || 0) + direction);
+      a.totalMatches = clamp((a.totalMatches || 0) + direction);
+      b.totalMatches = clamp((b.totalMatches || 0) + direction);
+    };
+    const outcomeFromStoredMatch = () => {
+      if (match.winnerDiscordId && match.loserDiscordId) {
+        if (match.winnerDiscordId === p1.discordId && match.loserDiscordId === p2.discordId) return 'player1';
+        if (match.winnerDiscordId === p2.discordId && match.loserDiscordId === p1.discordId) return 'player2';
+      }
+      if (match.result === 'player1' || match.result === 'player2' || match.result === 'draw') {
+        return match.result;
+      }
+      return null;
+    };
+
+    const previousOutcome = match.status === 'completed' ? outcomeFromStoredMatch() : null;
+    const nextOutcome = winner;
+
+    // Idempotent override: if outcome is unchanged, only update override metadata.
+    if (previousOutcome && previousOutcome === nextOutcome) {
+      match.disputed = false;
+      match.status = 'completed';
+      match.adminOverride = {
+        overriddenBy: req.user.discordId,
+        overriddenAt: new Date(),
+        reason: reason || 'Admin override',
+      };
+      await match.save();
+      return res.json({ message: 'Match already had this result; override metadata updated without ranking changes.' });
+    }
+
+    // Reverse previously applied outcome before applying new one.
+    if (previousOutcome === 'player1') adjustWinLoss(p1, p2, -1);
+    if (previousOutcome === 'player2') adjustWinLoss(p2, p1, -1);
+    if (previousOutcome === 'draw') adjustDraw(p1, p2, -1);
+
+    if (nextOutcome === 'player1') adjustWinLoss(p1, p2, 1);
+    if (nextOutcome === 'player2') adjustWinLoss(p2, p1, 1);
+    if (nextOutcome === 'draw') adjustDraw(p1, p2, 1);
+
+    match.result = nextOutcome;
+    match.disputed = false;
+    match.status = 'completed';
+    match.winnerDiscordId = nextOutcome === 'player1' ? p1.discordId : nextOutcome === 'player2' ? p2.discordId : null;
+    match.loserDiscordId = nextOutcome === 'player1' ? p2.discordId : nextOutcome === 'player2' ? p1.discordId : null;
+    match.winnerRank = match.winnerDiscordId ? getRank(nextOutcome === 'player1' ? p1.rankingPoints : p2.rankingPoints).name : null;
+    match.loserRank = match.loserDiscordId ? getRank(nextOutcome === 'player1' ? p2.rankingPoints : p1.rankingPoints).name : null;
     match.adminOverride = {
       overriddenBy: req.user.discordId,
       overriddenAt: new Date(),
       reason: reason || 'Admin override',
     };
-
-    // Apply ranking points for the override
-    if (match.player1 && match.player2 && winner && winner !== 'draw') {
-      const p1 = match.player1;
-      const p2 = match.player2;
-      const p1Points = p1.rankingPoints || 0;
-      const p2Points = p2.rankingPoints || 0;
-
-      if (winner === 'player1') {
-        const pointsChange = calculatePointsChange(p1Points, p2Points);
-        p1.rankingPoints += pointsChange.winPoints;
-        p2.rankingPoints = Math.max(0, p2.rankingPoints - pointsChange.lossPoints);
-        p1.wins = (p1.wins || 0) + 1;
-        p2.losses = (p2.losses || 0) + 1;
-      } else if (winner === 'player2') {
-        const pointsChange = calculatePointsChange(p2Points, p1Points);
-        p2.rankingPoints += pointsChange.winPoints;
-        p1.rankingPoints = Math.max(0, p1.rankingPoints - pointsChange.lossPoints);
-        p2.wins = (p2.wins || 0) + 1;
-        p1.losses = (p1.losses || 0) + 1;
-      }
-
-      await p1.save();
-      await p2.save();
-    }
-
+    await p1.save();
+    await p2.save();
     await match.save();
 
     await logAction(req, 'override_result', `${match.player1?.discordName || 'P1'} vs ${match.player2?.discordName || 'P2'}`, null, {

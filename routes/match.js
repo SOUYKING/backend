@@ -370,12 +370,12 @@ router.get('/:matchId/active-info', authenticate, async (req, res) => {
     const isStaff = req.user.role === 'admin' || req.user.role === 'owner' || req.user.role === 'staff';
     const isParticipant = activeMatch.player1.userId === req.user.id || activeMatch.player2.userId === req.user.id;
 
-    // Staff ALWAYS join as staff/observer, never as a player slot
-    const effectiveIsParticipant = isParticipant && !isStaff;
-    const effectiveIsStaff = isStaff;
+    // If a staff account is one of the two players, treat them as a normal participant.
+    const effectiveIsParticipant = isParticipant;
+    const effectiveIsStaff = isStaff && !isParticipant;
     const effectiveIsSpectator = !effectiveIsParticipant && !effectiveIsStaff;
 
-    // Only show self for actual players (not staff)
+    // Show self for actual match participants (including staff accounts that are playing).
     const selfPlayer = effectiveIsParticipant ? (activeMatch.player1.userId === req.user.id ? activeMatch.player1 : activeMatch.player2) : null;
     const opponent = effectiveIsParticipant
       ? (activeMatch.player1.userId === req.user.id ? activeMatch.player2 : activeMatch.player1)
