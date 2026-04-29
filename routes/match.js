@@ -268,12 +268,24 @@ router.get('/current', authenticate, async (req, res) => {
       const self = isOnP1 ? currentMatch.player1 : currentMatch.player2;
       const opponent = isOnP1 ? currentMatch.player2 : currentMatch.player1;
 
-      const [selfUser, oppUser] = await Promise.all([
-        User.findOne({ discordId: self.userId }).select('discordAvatar rankingPoints'),
-        User.findOne({ discordId: opponent.userId }).select('discordAvatar rankingPoints'),
+      const selfTeam = !!self.teamMode;
+      const oppTeam = !!opponent.teamMode;
+      const selfLookupDiscordId = selfTeam ? null : self.userId;
+      const oppLookupDiscordId = oppTeam ? (opponent.captainId || null) : opponent.userId;
+
+      const [selfUser, oppUser, callerUser] = await Promise.all([
+        selfLookupDiscordId
+          ? User.findOne({ discordId: selfLookupDiscordId }).select('discordAvatar rankingPoints')
+          : Promise.resolve(null),
+        oppLookupDiscordId
+          ? User.findOne({ discordId: oppLookupDiscordId }).select('discordAvatar rankingPoints')
+          : Promise.resolve(null),
+        selfTeam
+          ? User.findOne({ discordId: req.user.id }).select('discordAvatar rankingPoints')
+          : Promise.resolve(null),
       ]);
 
-      const selfRankingPoints = self.rankingPoints ?? selfUser?.rankingPoints ?? 0;
+      const selfRankingPoints = self.rankingPoints ?? selfUser?.rankingPoints ?? callerUser?.rankingPoints ?? 0;
       const oppRankingPoints = opponent.rankingPoints ?? oppUser?.rankingPoints ?? 0;
 
       const buildAvatar = (id, hash) => {
@@ -282,20 +294,27 @@ router.get('/current', authenticate, async (req, res) => {
         return `https://cdn.discordapp.com/avatars/${id}/${hash}.${ext}?size=256`;
       };
 
+      const selfAvatarDiscordId = selfTeam ? req.user.id : self.userId;
+      const selfAvatarHash = selfTeam
+        ? (callerUser?.discordAvatar || self.avatar)
+        : (self.avatar || selfUser?.discordAvatar);
+      const oppAvatarDiscordId = oppLookupDiscordId || opponent.userId;
+      const oppAvatarHash = opponent.avatar || oppUser?.discordAvatar;
+
       res.json({
         inMatch: true,
         matchId: currentMatch.matchId,
-        selfId: self.teamMode ? (self.captainId || self.userId) : self.userId,
+        selfId: selfTeam ? (self.captainId || self.userId) : self.userId,
         selfName: self.username,
         selfEpicName: self.epicName,
-        selfAvatar: buildAvatar(self.userId, self.avatar || selfUser?.discordAvatar),
+        selfAvatar: buildAvatar(selfAvatarDiscordId, selfAvatarHash),
         selfSkillRating: selfRankingPoints,
         opponent: opponent.username,
         opponentId: opponent.userId,
         opponentEpicName: opponent.epicName,
         opponentRank: getRank(oppRankingPoints).name,
         opponentSkillRating: oppRankingPoints,
-        opponentAvatar: buildAvatar(opponent.userId, opponent.avatar || oppUser?.discordAvatar),
+        opponentAvatar: buildAvatar(oppAvatarDiscordId, oppAvatarHash),
         tournamentId: currentMatch.player1.tournamentId,
         mapCode: currentMatch.mapCode || null,
         resultExpiresAt: currentMatch.resultExpiresAt || null,

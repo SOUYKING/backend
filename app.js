@@ -130,6 +130,16 @@ function cleanupSocketRooms(socketId) {
   socketMatchRooms.delete(socketId);
 }
 
+/** Expected distinct participant Discord accounts that may join the match room (1v1: 2, 2v2: 4, …). */
+function expectedMatchRoomPlayers(activeMatch) {
+  const sideCount = (p) => {
+    if (!p?.teamMode) return 1;
+    const n = (Array.isArray(p.teamMemberIds) && p.teamMemberIds.length) || p.teamSize;
+    return Math.max(1, Number(n) || 1);
+  };
+  return sideCount(activeMatch.player1) + sideCount(activeMatch.player2);
+}
+
 function checkChatSpam(userId) {
   const now = Date.now();
   const record = chatRateLimits.get(userId) || { count: 0, resetTime: now + 60000, lastMessageAt: 0 };
@@ -431,12 +441,18 @@ io.on('connection', (socket) => {
         socket.emit('chatHistory', { chatLogs: activeMatch.chatLogs });
       }
 
-      if (activeMatch.joinedPlayers.size >= 2 && !activeMatch._bothJoinedMsgSent) {
+      const needJoined = expectedMatchRoomPlayers(activeMatch);
+      if (activeMatch.joinedPlayers.size >= needJoined && !activeMatch._bothJoinedMsgSent) {
         activeMatch._bothJoinedMsgSent = true;
         const timeStr = new Date().toISOString();
+        const timeLabel = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+        const roomReadyText =
+          needJoined <= 2
+            ? `✅ Both players are now in the match — ${activeMatch.player1.username} vs ${activeMatch.player2.username}. Match started at ${timeLabel}.`
+            : `✅ All ${needJoined} players are in the match room — ${activeMatch.player1.username} vs ${activeMatch.player2.username}. Match started at ${timeLabel}.`;
         const msg = {
           sender: 'System',
-          message: `✅ Both players are now in the match — ${activeMatch.player1.username} vs ${activeMatch.player2.username}. Match started at ${new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}.`,
+          message: roomReadyText,
           time: timeStr,
           isSystem: true,
         };
