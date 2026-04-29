@@ -419,8 +419,12 @@ router.get('/:matchId/active-info', authenticate, async (req, res) => {
     const activeMatch = GameEngine.getActiveMatch(req.params.matchId);
     if (!activeMatch) return res.status(404).json({ message: 'Active match not found or already completed' });
 
-    const user = await User.findOne({ discordId: req.user.id });
-    const isStaff = req.user.role === 'admin' || req.user.role === 'owner' || req.user.role === 'staff';
+    const roleNorm = String(req.user.role || '').toLowerCase();
+    const isStaff =
+      !!req.user.isOwner ||
+      roleNorm === 'owner' ||
+      roleNorm === 'admin' ||
+      roleNorm === 'staff';
     const isParticipant =
       activeMatch.player1.userId === req.user.id ||
       activeMatch.player2.userId === req.user.id ||
