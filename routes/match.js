@@ -56,6 +56,20 @@ async function buildActiveMatchSide(queuePlayer) {
   };
 }
 
+function isQueueEntityParticipant(queuePlayer, discordId) {
+  if (!queuePlayer || !discordId) return false;
+  if (queuePlayer.userId === discordId) return true;
+  if (queuePlayer.captainId === discordId) return true;
+  if ((queuePlayer.teamMemberIds || []).includes(discordId)) return true;
+  return false;
+}
+
+function isActiveMatchParticipant(activeMatch, discordId) {
+  if (!activeMatch || !discordId) return false;
+  return isQueueEntityParticipant(activeMatch.player1, discordId)
+    || isQueueEntityParticipant(activeMatch.player2, discordId);
+}
+
 // ──────────────────────────────────────────────
 // MATCH HISTORY (user's completed matches)
 // ──────────────────────────────────────────────
@@ -152,8 +166,9 @@ router.post('/:matchId/evidence', authenticate, async (req, res) => {
   try {
     const activeMatch = GameEngine.getActiveMatch(matchId);
     if (activeMatch) {
-      const isParticipant = [activeMatch.player1.userId, activeMatch.player2.userId].includes(req.user.id);
-      if (!isParticipant) return res.status(403).json({ message: 'Only match participants can add evidence' });
+      if (!isActiveMatchParticipant(activeMatch, req.user.id)) {
+        return res.status(403).json({ message: 'Only match participants can add evidence' });
+      }
       activeMatch.evidence = activeMatch.evidence || [];
       activeMatch.evidence.push({
         playerDiscordId: req.user.id,

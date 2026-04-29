@@ -172,7 +172,10 @@ io.on('connection', (socket) => {
       socket.join(`user:${userId}`);
     }
     const queue = GameEngine.getQueue();
-    const queueIndex = queue.findIndex(p => p.userId === userId);
+    const queueIndex = queue.findIndex((p) => {
+      if (p.teamMode) return p.captainId === userId;
+      return p.userId === userId;
+    });
     if (queueIndex !== -1) {
       GameEngine.queue[queueIndex].socketId = socket.id;
       await GameEngine.processMatchmaking();
