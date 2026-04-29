@@ -343,11 +343,12 @@ router.get('/:matchId/details', authenticate, async (req, res) => {
     const oppUser = isPlayer1 ? match.player2 : match.player1;
 
     let result;
-    if (match.disputed && match.status === 'disputed') result = 'Disputed';
+    if (match.disputed || match.status === 'disputed') result = 'Disputed';
     else if (match.result === 'draw') result = 'Draw';
     else if (match.result === 'player1') result = isPlayer1 ? 'Win' : 'Loss';
     else if (match.result === 'player2') result = !isPlayer1 ? 'Win' : 'Loss';
-    else result = isPlayer1 ? 'Win' : 'Loss';
+    else if (match.status === 'pending') result = 'Pending';
+    else result = 'Unknown';
 
     res.json({
       id: match._id, date: match.date, result, disputed: !!match.disputed, status: match.status,
