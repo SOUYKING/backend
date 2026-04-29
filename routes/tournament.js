@@ -377,15 +377,46 @@ router.post('/:id/leave', authenticate, async (req, res) => {
   }
 });
 
-// Get tournament leaderboard
+// Get tournament leaderboard (enriched with team info from participants for squad modes)
 router.get('/:id/leaderboard', async (req, res) => {
   try {
     const tournament = await Tournament.findById(req.params.id);
     if (!tournament) {
       return res.status(404).json({ message: 'Tournament not found' });
     }
-    const sortedLeaderboard = [...tournament.leaderboard].sort((a, b) => b.points - a.points);
-    res.json(sortedLeaderboard);
+    const t = tournament.toObject();
+    const participantByUserId = Object.fromEntries(
+      (t.participants || []).map((p) => [p.userId, p]),
+    );
+    const entries = [...(t.leaderboard || [])]
+      .map((entry) => {
+        const e = { ...entry };
+        const p = participantByUserId[e.userId];
+        return {
+          ...e,
+          teamId: p?.teamId || null,
+          teamName: p?.teamName || null,
+          epicName: p?.epicName || null,
+        };
+      })
+      .sort((a, b) => (b.points || 0) - (a.points || 0));
+
+    res.json({
+      tournament: {
+        _id: t._id,
+        title: t.title,
+        type: t.type,
+        mapCode: t.mapCode,
+        mapName: t.mapName,
+        prize: t.prize,
+        bannerImage: t.bannerImage,
+        description: t.description,
+        startDate: t.startDate,
+        endDate: t.endDate,
+        status: t.status,
+      },
+      entries,
+    });
   } catch (error) {
     console.error('Error fetching leaderboard:', error.message);
     res.status(500).json({ message: 'Failed to fetch leaderboard' });
