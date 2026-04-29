@@ -8,6 +8,54 @@ const eventBus = require('../utils/eventBus');
 const { getRank, getRankProgress, calculatePointsChange } = require('../utils/rankSystem');
 const router = express.Router();
 
+async function buildActiveMatchSide(queuePlayer) {
+  if (!queuePlayer) return null;
+  if (queuePlayer.teamMode && Array.isArray(queuePlayer.teamMemberIds) && queuePlayer.teamMemberIds.length > 0) {
+    const ids = [...queuePlayer.teamMemberIds];
+    const users = await User.find({ discordId: { $in: ids } })
+      .select('discordId discordName discordAvatar epicGamesName rankingPoints');
+    const byId = Object.fromEntries(users.map((u) => [u.discordId, u]));
+    const captainId = queuePlayer.captainId;
+    const members = ids.map((id) => {
+      const u = byId[id];
+      return {
+        id,
+        username: u?.discordName || 'Player',
+        epicName: u?.epicGamesName || null,
+        avatar: u?.discordAvatar || null,
+        rankingPoints: u?.rankingPoints ?? 0,
+        isCaptain: id === captainId,
+      };
+    });
+    members.sort((a, b) => Number(b.isCaptain) - Number(a.isCaptain));
+    return {
+      teamMode: true,
+      teamId: queuePlayer.teamId || null,
+      label: queuePlayer.teamName || queuePlayer.username,
+      teamSize: queuePlayer.teamSize || members.length,
+      queueUserId: queuePlayer.userId,
+      members,
+    };
+  }
+  return {
+    teamMode: false,
+    teamId: null,
+    label: queuePlayer.username,
+    teamSize: 1,
+    queueUserId: queuePlayer.userId,
+    members: [
+      {
+        id: queuePlayer.userId,
+        username: queuePlayer.username,
+        epicName: queuePlayer.epicName || null,
+        avatar: queuePlayer.avatar || null,
+        rankingPoints: queuePlayer.rankingPoints ?? 0,
+        isCaptain: true,
+      },
+    ],
+  };
+}
+
 // ──────────────────────────────────────────────
 // MATCH HISTORY (user's completed matches)
 // ──────────────────────────────────────────────
@@ -400,14 +448,41 @@ router.get('/:matchId/active-info', authenticate, async (req, res) => {
       )
       : activeMatch.player1; // staff see player1 as "opponent" reference
 
-    const selfUser = effectiveIsParticipant ? await User.findOne({ discordId: selfPlayer.userId }).select('discordAvatar rankingPoints') : null;
-    const oppUser = await User.findOne({ discordId: opponent.userId }).select('discordAvatar rankingPoints');
+    const selfUser = effectiveIsParticipant && !String(selfPlayer.userId || '').startsWith('team:')
+      ? await User.findOne({ discordId: selfPlayer.userId }).select('discordAvatar rankingPoints')
+      : null;
+    const oppDiscordId = String(opponent.userId || '').startsWith('team:') ? opponent.captainId : opponent.userId;
+    const oppUser = oppDiscordId
+      ? await User.findOne({ discordId: oppDiscordId }).select('discordAvatar rankingPoints')
+      : null;
+
+    let participantSide = null;
+    if (effectiveIsParticipant) {
+      const onP1 =
+        activeMatch.player1.userId === req.user.id ||
+        (activeMatch.player1.teamMemberIds || []).includes(req.user.id);
+      participantSide = onP1 ? 'player1' : 'player2';
+    }
+
+    const isTeamMatch = !!(activeMatch.player1.teamMode || activeMatch.player2.teamMode);
+    const isTeamCaptain =
+      !effectiveIsParticipant
+        ? false
+        : !selfPlayer.teamMode || selfPlayer.captainId === req.user.id;
+
+    const [sidePlayer1, sidePlayer2] = await Promise.all([
+      buildActiveMatchSide(activeMatch.player1),
+      buildActiveMatchSide(activeMatch.player2),
+    ]);
 
     res.json({
       inMatch: true,
       matchId: activeMatch.matchId,
       isSpectator: effectiveIsSpectator,
       isStaff: effectiveIsStaff,
+      teamMatch: isTeamMatch,
+      participantSide,
+      isTeamCaptain,
       self: effectiveIsParticipant ? {
         id: selfPlayer.userId, username: selfPlayer.username, epicName: selfPlayer.epicName,
         avatar: selfPlayer.avatar || selfUser?.discordAvatar,
@@ -419,6 +494,7 @@ router.get('/:matchId/active-info', authenticate, async (req, res) => {
       mapCode: activeMatch.mapCode || null,
       player1: { id: activeMatch.player1.userId, username: activeMatch.player1.username, avatar: activeMatch.player1.avatar },
       player2: { id: activeMatch.player2.userId, username: activeMatch.player2.username, avatar: activeMatch.player2.avatar },
+      sides: { player1: sidePlayer1, player2: sidePlayer2 },
     });
   } catch (error) {
     console.error('Error fetching active match info:', error);
