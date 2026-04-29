@@ -26,17 +26,20 @@ router.get('/history', authenticate, async (req, res) => {
       const opp = isPlayer1 ? match.player2 : match.player1;
 
       let result;
-      if (match.disputed && match.status === 'disputed') result = 'Disputed';
+      if (match.disputed || match.status === 'disputed') result = 'Disputed';
       else if (match.result === 'draw') result = 'Draw';
       else if (match.result === 'player1') result = isPlayer1 ? 'Win' : 'Loss';
       else if (match.result === 'player2') result = !isPlayer1 ? 'Win' : 'Loss';
-      else result = isPlayer1 ? 'Win' : 'Loss';
+      else if (match.status === 'pending') result = 'Pending';
+      else result = 'Unknown';
 
       return {
         id: match._id,
-        opponent: opp?.discordName,
+        opponent: opp?.discordName || 'Unknown Player',
         opponentId: opp?.discordId,
         opponentAvatar: opp?.discordAvatar,
+        selfId: user.discordId,
+        selfAvatar: user.discordAvatar || null,
         result,
         date: match.date,
         tournamentId: match.tournamentId,

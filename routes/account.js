@@ -203,7 +203,7 @@ router.post('/admin/unban', authenticate, async (req, res) => {
 
 // Update Epic Games Name
 router.post('/update', authenticate, async (req, res) => {
-  const { epicGamesName } = req.body;
+  const epicGamesName = (req.body?.epicGamesName || '').trim();
 
   if (!epicGamesName) {
     return res.status(400).json({ message: 'Epic Games Name is required' });
@@ -229,6 +229,13 @@ router.post('/update', authenticate, async (req, res) => {
       });
     }
 
+    const existingByName = await User.findOne({ epicGamesName });
+    if (existingByName && existingByName.discordId !== req.user.discordId) {
+      return res.status(409).json({
+        message: 'This Epic Games display name is already linked to another user.'
+      });
+    }
+
     // Update Epic Games Name and lastEpicUpdate timestamp
     user.epicGamesName = epicGamesName;
     user.lastEpicUpdate = now;
@@ -236,7 +243,8 @@ router.post('/update', authenticate, async (req, res) => {
 
     res.json({ 
       message: 'Epic Games Name updated successfully!',
-      epicGamesName: epicGamesName 
+      epicGamesName: epicGamesName,
+      epicVerified: !!user.epicVerified,
     });
   } catch (error) {
     console.error('Error updating Epic Games Name:', error.message);
