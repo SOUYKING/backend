@@ -9,7 +9,6 @@ const authenticate = require('../middlewares/authenticate');
 const eventBus = require('../utils/eventBus');
 const router = express.Router();
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
-const oauthRateLimitByIp = new Map();
 
 function logAuthAttempt({ discordId, discordName, role, ip, success, reason, whitelisted, banned, altDetected, ...extra }) {
   const entry = {
@@ -64,14 +63,6 @@ router.get('/callback', async (req, res) => {
   }
 
   try {
-    const now = Date.now();
-    const blockedUntil = oauthRateLimitByIp.get(clientIP) || 0;
-    if (blockedUntil > now) {
-      const retryAfter = Math.max(1, Math.ceil((blockedUntil - now) / 1000));
-      logAuthAttempt({ ip: clientIP, success: false, reason: 'rate_limited_local_cooldown', retryAfter });
-      return res.redirect(`${FRONTEND_URL}?error=rate_limited&retryAfter=${retryAfter}`);
-    }
-
     console.log("Processing OAuth callback with code:", code.substring(0, 20) + "...");
 
     const proto = req.headers['x-forwarded-proto'] || req.protocol;
@@ -294,18 +285,7 @@ router.get('/callback', async (req, res) => {
   } catch (error) {
     const discordErr = error.response?.data || {};
     const statusCode = error.response?.status || '';
-    const retryAfterHeader = Number(error.response?.headers?.['retry-after'] || 0);
-    const retryAfterBody = Number(discordErr?.retry_after || 0);
-    const retryAfterSec = Math.max(1, Math.ceil(retryAfterHeader || retryAfterBody || 120));
     console.error('Error during OAuth callback:', statusCode, JSON.stringify(discordErr).substring(0, 300) || error.message);
-    if (statusCode === 429) {
-      const cooldownUntil = Date.now() + (retryAfterSec * 1000);
-      oauthRateLimitByIp.set(clientIP, cooldownUntil);
-      logAuthAttempt({ ip: clientIP, success: false, reason: 'rate_limited', retryAfter: retryAfterSec });
-      eventBus.emit('admin:login-attempt', { ip: clientIP, success: false, reason: 'rate_limited', retryAfter: retryAfterSec }, { source: 'auth' });
-      return res.redirect(`${FRONTEND_URL}?error=rate_limited&retryAfter=${retryAfterSec}`);
-    }
-
     logAuthAttempt({ ip: clientIP, success: false, reason: discordErr.error || 'oauth_failed' });
     eventBus.emit('admin:login-attempt', { ip: clientIP, success: false, reason: discordErr.error || 'oauth_failed' }, { source: 'auth' });
     return res.redirect(`${FRONTEND_URL}?error=oauth_failed`);
