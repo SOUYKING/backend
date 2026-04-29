@@ -302,11 +302,6 @@ io.on('connection', (socket) => {
             });
           }
         }
-        const alreadyLocked = (team.tournamentLocks || []).some((lock) => String(lock.tournamentId) === String(tournament._id));
-        if (!alreadyLocked) {
-          team.tournamentLocks.push({ tournamentId: String(tournament._id), lockedAt: new Date() });
-          await team.save();
-        }
         const avgRp = Math.round(teamMembers.reduce((sum, m) => sum + (m.rankingPoints || 0), 0) / requiredTeamSize);
         player = {
           userId: `team:${team._id}`,
@@ -335,14 +330,20 @@ io.on('connection', (socket) => {
 
       const queueResult = await GameEngine.joinQueue(player);
       if (!queueResult.success) {
-        if (player.teamMode && player.teamId && tournamentId) {
-          const Team = require('./models/Team');
-          await Team.updateOne(
-            { _id: player.teamId },
-            { $pull: { tournamentLocks: { tournamentId: String(tournament._id) } } },
-          );
-        }
         return socket.emit('error', { message: queueResult.reason });
+      }
+
+      if (player.teamMode && player.teamId) {
+        const Team = require('./models/Team');
+        const lockTeam = await Team.findById(player.teamId);
+        if (lockTeam) {
+          const tid = String(tournament._id);
+          const alreadyLocked = (lockTeam.tournamentLocks || []).some((lock) => String(lock.tournamentId) === tid);
+          if (!alreadyLocked) {
+            lockTeam.tournamentLocks.push({ tournamentId: tid, lockedAt: new Date() });
+            await lockTeam.save();
+          }
+        }
       }
 
       socket.emit('waiting', { message: 'Waiting for opponent...', queueSize: GameEngine.getQueueSize(tournamentId) });

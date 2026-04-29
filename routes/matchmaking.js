@@ -107,11 +107,6 @@ router.post('/join', authenticate, async (req, res) => {
         }
       }
 
-      const alreadyLocked = (team.tournamentLocks || []).some((lock) => String(lock.tournamentId) === String(tournament._id));
-      if (!alreadyLocked) {
-        team.tournamentLocks.push({ tournamentId: String(tournament._id), lockedAt: new Date() });
-        await team.save();
-      }
       await tournament.save();
 
       const avgRp = Math.round(memberUsers.reduce((sum, m) => sum + (m.rankingPoints || 0), 0) / requiredTeamSize);
@@ -133,13 +128,19 @@ router.post('/join', authenticate, async (req, res) => {
 
     const result = await GameEngine.joinQueue(player);
     if (!result.success) {
-      if (requiredTeamSize > 1 && teamId) {
-        await Team.updateOne(
-          { _id: teamId },
-          { $pull: { tournamentLocks: { tournamentId: String(tournament._id) } } },
-        );
-      }
       return res.status(400).json({ message: result.reason });
+    }
+
+    if (requiredTeamSize > 1 && teamId) {
+      const lockTeam = await Team.findById(teamId);
+      if (lockTeam) {
+        const tid = String(tournament._id);
+        const alreadyLocked = (lockTeam.tournamentLocks || []).some((lock) => String(lock.tournamentId) === tid);
+        if (!alreadyLocked) {
+          lockTeam.tournamentLocks.push({ tournamentId: tid, lockedAt: new Date() });
+          await lockTeam.save();
+        }
+      }
     }
 
     console.log(`✅ ${req.user.username} joined matchmaking queue for tournament: ${tournament.title}`);

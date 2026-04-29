@@ -1,17 +1,27 @@
 const express = require('express');
 const authenticate = require('../middlewares/authenticate');
-const GameEngine = require('../core/GameEngine');
 const Team = require('../models/Team');
 const TeamInvite = require('../models/TeamInvite');
+const Tournament = require('../models/Tournament');
 const User = require('../models/User');
 
 const router = express.Router();
 
-/** DB locks can linger after queue leave, match end, server restart, or deleted tournaments — clear if not live. */
+/** Drop roster locks for tournaments that ended, were cancelled, or were deleted (Mongo has no doc). */
 async function clearStaleTournamentLocks(team) {
   if (!team?.tournamentLocks?.length) return;
-  if (!GameEngine.isTeamInLiveQueueOrMatch(String(team._id))) {
-    team.tournamentLocks = [];
+  const ids = [...new Set(team.tournamentLocks.map((l) => l.tournamentId).filter(Boolean))];
+  if (!ids.length) return;
+  const tournaments = await Tournament.find({ _id: { $in: ids } }).select('_id status');
+  const byId = new Map(tournaments.map((t) => [String(t._id), t]));
+  const endedStatuses = new Set(['completed', 'cancelled']);
+  const next = team.tournamentLocks.filter((l) => {
+    const t = byId.get(String(l.tournamentId));
+    if (!t) return false;
+    return !endedStatuses.has(t.status);
+  });
+  if (next.length !== team.tournamentLocks.length) {
+    team.tournamentLocks = next;
     await team.save();
   }
 }

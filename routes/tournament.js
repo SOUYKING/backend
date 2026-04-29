@@ -1,8 +1,17 @@
 const express = require('express');
 const Tournament = require('../models/Tournament');
+const Team = require('../models/Team');
 const User = require('../models/User');
 const authenticate = require('../middlewares/authenticate');
 const router = express.Router();
+
+async function pullTeamRosterLocksForTournament(tournamentId) {
+  const tid = String(tournamentId);
+  await Team.updateMany(
+    { 'tournamentLocks.tournamentId': tid },
+    { $pull: { tournamentLocks: { tournamentId: tid } } },
+  );
+}
 
 const getTournamentLifecycle = (tournament) => {
   const now = new Date();
@@ -212,6 +221,9 @@ router.put('/:id', authenticate, async (req, res) => {
     if (status) tournament.status = status;
 
     await tournament.save();
+    if (status && ['completed', 'cancelled'].includes(tournament.status)) {
+      await pullTeamRosterLocksForTournament(tournament._id);
+    }
     console.log(`✅ Tournament updated: ${tournament.title}`);
     res.json({ message: 'Tournament updated successfully!', tournament });
   } catch (error) {
@@ -233,6 +245,7 @@ router.delete('/:id', authenticate, async (req, res) => {
     if (!tournament) {
       return res.status(404).json({ message: 'Tournament not found' });
     }
+    await pullTeamRosterLocksForTournament(req.params.id);
     console.log(`✅ Tournament deleted: ${tournament.title}`);
     res.json({ message: 'Tournament deleted successfully!' });
   } catch (error) {
