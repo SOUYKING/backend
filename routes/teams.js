@@ -27,15 +27,10 @@ async function clearStaleTournamentLocks(team) {
 }
 
 const TEAM_MODE_ENABLED = process.env.TEAM_MODE_ENABLED !== 'false';
-const isTeamTesterRole = (role) => ['admin', 'owner', 'staff', 'content_creator'].includes((role || '').toLowerCase());
 
-const requireTeamAccess = async (req, res, next) => {
+const requireTeamAccess = (req, res, next) => {
   if (!TEAM_MODE_ENABLED) return res.status(403).json({ message: 'Team mode is disabled' });
-  const user = await User.findOne({ discordId: req.user.id }).select('role');
-  if (!user || !isTeamTesterRole(user.role)) {
-    return res.status(403).json({ message: 'Team mode is currently admin-only' });
-  }
-  req.viewerRole = user.role;
+  req.viewerRole = req.user.role;
   next();
 };
 
