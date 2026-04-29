@@ -1,6 +1,62 @@
 # FNT Arena — Deployment & Current Project State
 
+## READ THIS FIRST — for new chats & AI assistants
+
+**If the user asks you to read `DEPLOY.md` (or “read deploy.md”) about hosting or the project:** treat **this file** as the primary briefing. You should infer:
+
+| Topic | Where in this file |
+|--------|-------------------|
+| **What the product is** | [What is FNT Arena?](#what-is-fnt-arena) + [Overview](#overview) |
+| **How to host / ship code** | [How hosting works](#how-hosting-works-summary), [Deploy Steps](#deploy-steps), [Environment Variables](#environment-variables) |
+| **What was built recently** | [Changelog](#changelog-recent-shipped-work) |
+| **Where code lives** | [Repositories](#repositories), [Local folder layout](#local-folder-layout-if-you-have-the-monorepo) |
+| **Important files** | [Key Files Reference](#key-files-reference-high-impact) |
+| **When something breaks** | [Troubleshooting](#troubleshooting) |
+
+**Suggested reply pattern after reading:** briefly restate stack (backend on Render, frontend on Vercel, MongoDB, Discord OAuth), confirm two GitHub repos, and follow user instructions using paths under `backend/` and `frontend/`.
+
+**Keeping this doc useful:** when you ship meaningful features or infra changes, append a short bullet under [Changelog](#changelog-recent-shipped-work) and bump [Last doc update](#last-doc-update) below.
+
+### Last doc update
+- **Purpose:** onboarding + deploy reference for humans and AI.
+- **Changelog:** squad modes, multi-tournament UX, `/match/current`, evidence/register fixes, live-match UI — see changelog section for detail.
+
+---
+
+## What is FNT Arena?
+
+**FNT Arena** is a web app where players **log in with Discord**, join **time-boxed Fortnite tournaments** (1v1 or squads 2v2 / 3v3 / 4v4), **queue for opponents**, enter a **live match room** (chat, map code, result reporting), and earn **rank points** and **tournament leaderboard** stats. **Staff/admin** can handle disputes and force results. **Teams** (rosters + captain) back squad tournaments; **only captains** queue and submit official results; **teammates** join the match room like players.
+
+---
+
+## How hosting works (summary)
+
+1. **Code** is in **two separate GitHub repos** — backend and frontend (see table below). Day-to-day: commit to `main`, push; hosts usually auto-deploy.
+2. **Backend** runs on **Render** (Node server: HTTP API + **Socket.io**). It needs **MongoDB** (e.g. Atlas) and **Discord** app credentials in Render env vars.
+3. **Frontend** runs on **Vercel** (static/React build). It must point to the live backend via `REACT_APP_API_URL` and `REACT_APP_SOCKET_URL`.
+4. **Custom domain** (e.g. `fntarena.online`) typically points to **Vercel**; OAuth redirect / CORS must include that URL and the backend callback URL in Discord’s developer portal.
+
+No secrets belong in this markdown — only in Render/Vercel dashboards.
+
+---
+
+## Local folder layout (if you have the monorepo)
+
+Some developers keep one folder with both apps (not a single git repo):
+
+```
+fortnite-1v1-tournament-main/
+  DEPLOY.md          ← this file (may exist only locally at repo root)
+  backend/           ← git repo: SOUYKING/backend
+  frontend/          ← git repo: SOUYKING/FRONTEND
+```
+
+Each of `backend/` and `frontend/` may also contain its **own copy** of `DEPLOY.md` (same content, committed to GitHub).
+
+---
+
 ## Overview
+
 Fortnite tournament matchmaking platform: **1v1**, **2v2**, **3v3**, and **4v4** (squads use the same match lifecycle as solos, with team entities and captain rules).
 
 - Backend: Node.js, Express, Socket.io, MongoDB (Mongoose), JWT, Discord OAuth
@@ -160,14 +216,11 @@ Set values in dashboards (Render/Vercel). Do not commit secrets to git.
 
 ---
 
-## Fresh Session Quick Context
+## Fresh session — paste for the user (optional)
 
-If starting with a new AI/dev session, provide:
-1. Two repos: `SOUYKING/backend`, `SOUYKING/FRONTEND`
-2. Backend URL: `https://backend-97zg.onrender.com`
-3. Frontend URL: `https://frontend-nine-zeta-89.vercel.app`
-4. Domain: `https://fntarena.online`
-5. **This file** is the source of truth for architecture, squad behavior, and recent changes.
+You can paste this in a new chat **after** attaching or pointing to `DEPLOY.md`:
+
+> Read `DEPLOY.md` first. Repos: `SOUYKING/backend` + `SOUYKING/FRONTEND`. Backend: Render. Frontend: Vercel. Domain: fntarena.online. Then: [your task].
 
 ---
 
