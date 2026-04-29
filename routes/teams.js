@@ -57,12 +57,37 @@ router.post('/create', async (req, res) => {
   try {
     const name = (req.body.name || '').trim();
     const size = Number(req.body.size);
+    const memberDiscordIds = Array.isArray(req.body.memberDiscordIds) ? req.body.memberDiscordIds : [];
     if (!name || ![2, 3, 4].includes(size)) {
       return res.status(400).json({ message: 'Valid team name and size (2/3/4) are required' });
     }
+    if (memberDiscordIds.length > size - 1) {
+      return res.status(400).json({ message: `You can select up to ${size - 1} teammates` });
+    }
+
+    const normalizedMemberIds = [...new Set(memberDiscordIds.filter((id) => id && id !== req.user.id))];
 
     const creator = await User.findOne({ discordId: req.user.id }).select('discordName');
     if (!creator) return res.status(404).json({ message: 'User not found' });
+
+    const existingTeam = await Team.findOne({
+      isActive: true,
+      name: { $regex: `^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' },
+    });
+    if (existingTeam) {
+      return res.status(400).json({ message: 'Team name already exists' });
+    }
+
+    const invitedUsers = normalizedMemberIds.length
+      ? await User.find({
+          discordId: { $in: normalizedMemberIds },
+          isBanned: { $ne: true },
+        }).select('discordId discordName')
+      : [];
+
+    if (invitedUsers.length !== normalizedMemberIds.length) {
+      return res.status(400).json({ message: 'One or more selected users are invalid or banned' });
+    }
 
     const team = await Team.create({
       name,
@@ -75,10 +100,48 @@ router.post('/create', async (req, res) => {
         status: 'accepted',
       }],
     });
+
+    if (invitedUsers.length > 0) {
+      const pendingMembers = invitedUsers.map((u) => ({
+        discordId: u.discordId,
+        discordName: u.discordName,
+        status: 'pending',
+        invitedBy: req.user.id,
+      }));
+      team.members.push(...pendingMembers);
+      await team.save();
+
+      await TeamInvite.insertMany(invitedUsers.map((u) => ({
+        teamId: team._id,
+        fromDiscordId: req.user.id,
+        fromDiscordName: creator.discordName || req.user.username || 'Captain',
+        toDiscordId: u.discordId,
+        toDiscordName: u.discordName,
+        status: 'pending',
+      })));
+    }
+
     res.status(201).json(team);
   } catch (error) {
     console.error('Create team error:', error);
     res.status(500).json({ message: 'Failed to create team' });
+  }
+});
+
+router.delete('/:teamId', async (req, res) => {
+  try {
+    const team = await Team.findById(req.params.teamId);
+    if (!team || !team.isActive) return res.status(404).json({ message: 'Team not found' });
+    if (team.captainDiscordId !== req.user.id) return res.status(403).json({ message: 'Only captain can delete team' });
+    if ((team.tournamentLocks || []).length > 0) return res.status(400).json({ message: 'Cannot delete team while locked in tournament' });
+
+    team.isActive = false;
+    await team.save();
+    await TeamInvite.updateMany({ teamId: team._id, status: 'pending' }, { $set: { status: 'cancelled', respondedAt: new Date() } });
+    res.json({ message: 'Team deleted successfully' });
+  } catch (error) {
+    console.error('Delete team error:', error);
+    res.status(500).json({ message: 'Failed to delete team' });
   }
 });
 
