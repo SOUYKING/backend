@@ -335,6 +335,13 @@ io.on('connection', (socket) => {
 
       const queueResult = await GameEngine.joinQueue(player);
       if (!queueResult.success) {
+        if (player.teamMode && player.teamId && tournamentId) {
+          const Team = require('./models/Team');
+          await Team.updateOne(
+            { _id: player.teamId },
+            { $pull: { tournamentLocks: { tournamentId: String(tournament._id) } } },
+          );
+        }
         return socket.emit('error', { message: queueResult.reason });
       }
 
@@ -375,9 +382,9 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('leaveQueue', () => {
+  socket.on('leaveQueue', async () => {
     if (socket.userId) {
-      GameEngine.leaveQueue(socket.userId);
+      await GameEngine.leaveQueue(socket.userId);
       socket.emit('leftQueue', { message: 'Left queue' });
       console.log(`❌ ${socket.userId} left queue`);
     }
@@ -643,7 +650,7 @@ socket.on('staffJoinMatch', async ({ matchId, staffName }) => {
   socket.on('disconnect', () => {
     console.log(`🔴 Disconnected: ${socket.id}`);
     if (socket.userId) {
-      GameEngine.leaveQueue(socket.userId);
+      GameEngine.leaveQueue(socket.userId).catch((err) => console.warn('[disconnect] leaveQueue', err.message));
     }
     cleanupSocketRooms(socket.id);
   });

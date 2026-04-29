@@ -132,7 +132,15 @@ router.post('/join', authenticate, async (req, res) => {
     }
 
     const result = await GameEngine.joinQueue(player);
-    if (!result.success) return res.status(400).json({ message: result.reason });
+    if (!result.success) {
+      if (requiredTeamSize > 1 && teamId) {
+        await Team.updateOne(
+          { _id: teamId },
+          { $pull: { tournamentLocks: { tournamentId: String(tournament._id) } } },
+        );
+      }
+      return res.status(400).json({ message: result.reason });
+    }
 
     console.log(`✅ ${req.user.username} joined matchmaking queue for tournament: ${tournament.title}`);
     res.json({ message: 'Joined matchmaking queue', queueSize: GameEngine.getQueueSize(tournamentId) });
@@ -144,7 +152,7 @@ router.post('/join', authenticate, async (req, res) => {
 
 router.post('/leave', authenticate, async (req, res) => {
   try {
-    GameEngine.leaveQueue(req.user.id);
+    await GameEngine.leaveQueue(req.user.id);
     console.log(`❌ ${req.user.username} left matchmaking queue`);
     res.json({ message: 'Left matchmaking queue' });
   } catch (error) {
