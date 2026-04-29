@@ -216,8 +216,9 @@ router.get('/current', authenticate, async (req, res) => {
     const currentMatch = GameEngine.getActiveMatchForUser(req.user.id);
 
     if (currentMatch) {
-      const self = currentMatch.player1.userId === req.user.id ? currentMatch.player1 : currentMatch.player2;
-      const opponent = currentMatch.player1.userId === req.user.id ? currentMatch.player2 : currentMatch.player1;
+      const isOnP1 = currentMatch.player1.userId === req.user.id || (currentMatch.player1.teamMemberIds || []).includes(req.user.id);
+      const self = isOnP1 ? currentMatch.player1 : currentMatch.player2;
+      const opponent = isOnP1 ? currentMatch.player2 : currentMatch.player1;
 
       const [selfUser, oppUser] = await Promise.all([
         User.findOne({ discordId: self.userId }).select('discordAvatar rankingPoints'),
@@ -236,7 +237,7 @@ router.get('/current', authenticate, async (req, res) => {
       res.json({
         inMatch: true,
         matchId: currentMatch.matchId,
-        selfId: self.userId,
+        selfId: self.teamMode ? (self.captainId || self.userId) : self.userId,
         selfName: self.username,
         selfEpicName: self.epicName,
         selfAvatar: buildAvatar(self.userId, self.avatar || selfUser?.discordAvatar),
@@ -372,7 +373,11 @@ router.get('/:matchId/active-info', authenticate, async (req, res) => {
 
     const user = await User.findOne({ discordId: req.user.id });
     const isStaff = req.user.role === 'admin' || req.user.role === 'owner' || req.user.role === 'staff';
-    const isParticipant = activeMatch.player1.userId === req.user.id || activeMatch.player2.userId === req.user.id;
+    const isParticipant =
+      activeMatch.player1.userId === req.user.id ||
+      activeMatch.player2.userId === req.user.id ||
+      (activeMatch.player1.teamMemberIds || []).includes(req.user.id) ||
+      (activeMatch.player2.teamMemberIds || []).includes(req.user.id);
 
     // If a staff account is one of the two players, treat them as a normal participant.
     const effectiveIsParticipant = isParticipant;
@@ -380,9 +385,19 @@ router.get('/:matchId/active-info', authenticate, async (req, res) => {
     const effectiveIsSpectator = !effectiveIsParticipant && !effectiveIsStaff;
 
     // Show self for actual match participants (including staff accounts that are playing).
-    const selfPlayer = effectiveIsParticipant ? (activeMatch.player1.userId === req.user.id ? activeMatch.player1 : activeMatch.player2) : null;
+    const selfPlayer = effectiveIsParticipant
+      ? (
+        activeMatch.player1.userId === req.user.id || (activeMatch.player1.teamMemberIds || []).includes(req.user.id)
+          ? activeMatch.player1
+          : activeMatch.player2
+      )
+      : null;
     const opponent = effectiveIsParticipant
-      ? (activeMatch.player1.userId === req.user.id ? activeMatch.player2 : activeMatch.player1)
+      ? (
+        activeMatch.player1.userId === req.user.id || (activeMatch.player1.teamMemberIds || []).includes(req.user.id)
+          ? activeMatch.player2
+          : activeMatch.player1
+      )
       : activeMatch.player1; // staff see player1 as "opponent" reference
 
     const selfUser = effectiveIsParticipant ? await User.findOne({ discordId: selfPlayer.userId }).select('discordAvatar rankingPoints') : null;

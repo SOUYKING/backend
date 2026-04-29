@@ -1,12 +1,13 @@
 const express = require('express');
 const User = require('../models/User');
 const Tournament = require('../models/Tournament');
+const Team = require('../models/Team');
 const authenticate = require('../middlewares/authenticate');
 const GameEngine = require('../core/GameEngine');
 const router = express.Router();
 
 router.post('/join', authenticate, async (req, res) => {
-  const { tournamentId, epicName } = req.body;
+  const { tournamentId, epicName, teamId } = req.body;
   if (!tournamentId) return res.status(400).json({ message: 'Tournament ID is required' });
 
   try {
@@ -33,36 +34,102 @@ router.post('/join', authenticate, async (req, res) => {
     if (user.isBanned) return res.status(403).json({ message: user.banReason || 'Your account is banned.' });
     if (!user.epicVerified) return res.status(403).json({ message: 'You must verify your Epic Games account to play' });
 
-    // Auto-add to participants if not already registered
-    let isRegistered = tournament.participants.some(p => p.userId === req.user.id);
-    if (!isRegistered) {
-      tournament.participants.push({
-        userId: req.user.id,
-        discordName: req.user.username,
-        rankingPoints: user.rankingPoints,
-        epicName: user.epicGamesName,
-        registeredAt: new Date(),
-      });
-      tournament.leaderboard.push({
-        userId: req.user.id,
-        discordId: req.user.id,
-        discordName: req.user.username,
-        discordAvatar: user.discordAvatar || null,
-        wins: 0,
-        losses: 0,
-        points: 0,
-      });
-      await tournament.save();
-    }
+    const requiredTeamSize = tournament.type === '2v2' ? 2 : tournament.type === '3v3' ? 3 : tournament.type === '4v4' ? 4 : 1;
+    let player;
+    if (requiredTeamSize === 1) {
+      let isRegistered = tournament.participants.some(p => p.userId === req.user.id);
+      if (!isRegistered) {
+        tournament.participants.push({
+          userId: req.user.id,
+          discordName: req.user.username,
+          rankingPoints: user.rankingPoints,
+          epicName: user.epicGamesName,
+          registeredAt: new Date(),
+        });
+        tournament.leaderboard.push({
+          userId: req.user.id,
+          discordId: req.user.id,
+          discordName: req.user.username,
+          discordAvatar: user.discordAvatar || null,
+          wins: 0,
+          losses: 0,
+          points: 0,
+        });
+        await tournament.save();
+      }
 
-    const player = {
-      userId: req.user.id,
-      username: req.user.username,
-      rankingPoints: user.rankingPoints,
-      epicName: epicName || user.epicGamesName,
-      tournamentId,
-      socketId: null,
-    };
+      player = {
+        userId: req.user.id,
+        username: req.user.username,
+        rankingPoints: user.rankingPoints,
+        epicName: epicName || user.epicGamesName,
+        tournamentId,
+        socketId: null,
+      };
+    } else {
+      if (!teamId) return res.status(400).json({ message: `This is a ${tournament.type} tournament. Select a team first.` });
+      const team = await Team.findById(teamId);
+      if (!team || !team.isActive) return res.status(404).json({ message: 'Team not found' });
+      if (team.size !== requiredTeamSize) return res.status(400).json({ message: `Team must be ${requiredTeamSize} players for this tournament` });
+      if (team.captainDiscordId !== req.user.id) return res.status(403).json({ message: 'Only team captain can join queue' });
+
+      const acceptedMembers = (team.members || []).filter((m) => m.status === 'accepted');
+      if (acceptedMembers.length !== requiredTeamSize) {
+        return res.status(400).json({ message: `Team must have exactly ${requiredTeamSize} accepted members` });
+      }
+
+      const memberIds = acceptedMembers.map((m) => m.discordId);
+      const memberUsers = await User.find({ discordId: { $in: memberIds } }).select('discordId discordName discordAvatar rankingPoints epicGamesName isBanned');
+      if (memberUsers.length !== requiredTeamSize) return res.status(400).json({ message: 'Some team members are missing profiles' });
+      if (memberUsers.some((m) => m.isBanned)) return res.status(403).json({ message: 'A team member is banned' });
+
+      for (const member of memberUsers) {
+        const alreadyRegistered = tournament.participants.some((p) => p.userId === member.discordId);
+        if (!alreadyRegistered) {
+          tournament.participants.push({
+            userId: member.discordId,
+            discordName: member.discordName,
+            rankingPoints: member.rankingPoints,
+            epicName: member.epicGamesName,
+            registeredAt: new Date(),
+            teamId: team._id.toString(),
+            teamName: team.name,
+          });
+          tournament.leaderboard.push({
+            userId: member.discordId,
+            discordId: member.discordId,
+            discordName: member.discordName,
+            discordAvatar: member.discordAvatar || null,
+            wins: 0,
+            losses: 0,
+            points: 0,
+          });
+        }
+      }
+
+      const alreadyLocked = (team.tournamentLocks || []).some((lock) => String(lock.tournamentId) === String(tournament._id));
+      if (!alreadyLocked) {
+        team.tournamentLocks.push({ tournamentId: String(tournament._id), lockedAt: new Date() });
+        await team.save();
+      }
+      await tournament.save();
+
+      const avgRp = Math.round(memberUsers.reduce((sum, m) => sum + (m.rankingPoints || 0), 0) / requiredTeamSize);
+      player = {
+        userId: `team:${team._id}`,
+        username: team.name,
+        rankingPoints: avgRp,
+        epicName: team.name,
+        tournamentId,
+        socketId: null,
+        teamMode: true,
+        teamId: String(team._id),
+        teamName: team.name,
+        teamSize: requiredTeamSize,
+        teamMemberIds: memberIds,
+        captainId: team.captainDiscordId,
+      };
+    }
 
     const result = await GameEngine.joinQueue(player);
     if (!result.success) return res.status(400).json({ message: result.reason });

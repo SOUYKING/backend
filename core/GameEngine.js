@@ -30,7 +30,7 @@ class GameEngine {
   // ──────────────────────────────────────────────
 
   async joinQueue(user) {
-    const validation = await this.validateUserState(user.userId);
+    const validation = await this.validateQueueEntity(user);
     if (!validation.valid) return { success: false, reason: validation.reason };
 
     const alreadyInQueue = this.queue.some(p => p.userId === user.userId);
@@ -60,7 +60,11 @@ class GameEngine {
   }
 
   leaveQueue(userId) {
-    const wasInQueue = this.queue.some(p => p.userId === userId);
+    const wasInQueue = this.queue.some((p) =>
+      p.userId === userId ||
+      p.captainId === userId ||
+      (p.teamMemberIds || []).includes(userId)
+    );
     this.removeFromQueue(userId);
     if (wasInQueue) {
       eventBus.emit('admin:queue-leave', { userId }, { source: 'gameEngine' });
@@ -69,7 +73,11 @@ class GameEngine {
   }
 
   removeFromQueue(userId) {
-    this.queue = this.queue.filter(p => p.userId !== userId);
+    this.queue = this.queue.filter((p) =>
+      p.userId !== userId &&
+      p.captainId !== userId &&
+      !(p.teamMemberIds || []).includes(userId)
+    );
   }
 
   getQueueSize(tournamentId = null) {
@@ -129,8 +137,8 @@ class GameEngine {
   }
 
   async createMatch(player1, player2) {
-    const v1 = await this.validateUserState(player1.userId);
-    const v2 = await this.validateUserState(player2.userId);
+    const v1 = await this.validateQueueEntity(player1);
+    const v2 = await this.validateQueueEntity(player2);
     if (!v1.valid || !v2.valid) {
       if (!v1.valid) this.removeFromQueue(player1.userId);
       if (!v2.valid) this.removeFromQueue(player2.userId);
@@ -196,7 +204,14 @@ class GameEngine {
 
   getActiveMatchForUser(userId) {
     for (const match of this.activeMatches.values()) {
-      if (match.player1.userId === userId || match.player2.userId === userId) {
+      const p1Members = match.player1.teamMemberIds || [];
+      const p2Members = match.player2.teamMemberIds || [];
+      if (
+        match.player1.userId === userId ||
+        match.player2.userId === userId ||
+        p1Members.includes(userId) ||
+        p2Members.includes(userId)
+      ) {
         return match;
       }
     }
@@ -212,10 +227,20 @@ class GameEngine {
     const match = this.activeMatches.get(matchId);
     if (!match) return { success: false, reason: 'Match not found' };
 
-    const isParticipant = match.player1.userId === userId || match.player2.userId === userId;
+    const isTeamMode = !!(match.player1.teamMode || match.player2.teamMode);
+    const isParticipant = isTeamMode
+      ? (match.player1.teamMemberIds || []).includes(userId) || (match.player2.teamMemberIds || []).includes(userId)
+      : (match.player1.userId === userId || match.player2.userId === userId);
     if (!isParticipant) return { success: false, reason: 'Not a participant' };
 
-    if (![match.player1.userId, match.player2.userId].includes(winnerDiscordId)) {
+    if (isTeamMode && ![match.player1.captainId, match.player2.captainId].includes(userId)) {
+      return { success: false, reason: 'Only team captain can submit result' };
+    }
+
+    const validWinnerIds = isTeamMode
+      ? [match.player1.userId, match.player2.userId, match.player1.captainId, match.player2.captainId]
+      : [match.player1.userId, match.player2.userId];
+    if (!validWinnerIds.includes(winnerDiscordId)) {
       return { success: false, reason: 'Invalid winner' };
     }
 
@@ -253,8 +278,9 @@ class GameEngine {
     this.activeMatches.set(matchId, match);
 
     const reportEntries = Object.values(match.reports);
-    const reporterName = match.player1.userId === userId ? match.player1.username : match.player2.username;
-    const winnerName = winnerDiscordId === match.player1.userId ? match.player1.username : match.player2.username;
+    const isWinnerP1 = [match.player1.userId, match.player1.captainId].includes(winnerDiscordId);
+    const reporterName = (match.player1.teamMemberIds || []).includes(userId) || match.player1.userId === userId ? match.player1.username : match.player2.username;
+    const winnerName = isWinnerP1 ? match.player1.username : match.player2.username;
 
     if (reportEntries.length < 2) {
       match._autoResolveWinner = { winnerDiscordId, submittedBy: userId, submittedAt: new Date() };
@@ -318,33 +344,44 @@ class GameEngine {
 
     this.clearAutoResolveTimer(matchId);
 
-    const loserDiscordId = winnerDiscordId === match.player1.userId ? match.player2.userId : match.player1.userId;
+    const winnerSideIsP1 = [match.player1.userId, match.player1.captainId].includes(winnerDiscordId);
+    const winnerSide = winnerSideIsP1 ? match.player1 : match.player2;
+    const loserSide = winnerSideIsP1 ? match.player2 : match.player1;
 
-    const winnerUser = await User.findOne({ discordId: winnerDiscordId });
-    const loserUser = await User.findOne({ discordId: loserDiscordId });
-    if (!winnerUser || !loserUser) return { success: false, reason: 'User not found' };
+    const winnerMemberIds = winnerSide.teamMode ? (winnerSide.teamMemberIds || [winnerSide.captainId]) : [winnerSide.userId];
+    const loserMemberIds = loserSide.teamMode ? (loserSide.teamMemberIds || [loserSide.captainId]) : [loserSide.userId];
+    const winnerUsers = await User.find({ discordId: { $in: winnerMemberIds } });
+    const loserUsers = await User.find({ discordId: { $in: loserMemberIds } });
+    if (!winnerUsers.length || !loserUsers.length) return { success: false, reason: 'User not found' };
 
-    const pointsChange = calculatePointsChange(winnerUser.rankingPoints, loserUser.rankingPoints);
+    const winnerAvg = Math.round(winnerUsers.reduce((sum, u) => sum + (u.rankingPoints || 0), 0) / winnerUsers.length);
+    const loserAvg = Math.round(loserUsers.reduce((sum, u) => sum + (u.rankingPoints || 0), 0) / loserUsers.length);
+    const pointsChange = calculatePointsChange(winnerAvg, loserAvg);
 
-    winnerUser.rankingPoints += pointsChange.winPoints;
-    loserUser.rankingPoints = Math.max(0, loserUser.rankingPoints - pointsChange.lossPoints);
-    winnerUser.wins += 1;
-    winnerUser.totalMatches += 1;
-    loserUser.losses += 1;
-    loserUser.totalMatches += 1;
+    for (const w of winnerUsers) {
+      w.rankingPoints += pointsChange.winPoints;
+      w.wins += 1;
+      w.totalMatches += 1;
+      await w.save();
+    }
+    for (const l of loserUsers) {
+      l.rankingPoints = Math.max(0, l.rankingPoints - pointsChange.lossPoints);
+      l.losses += 1;
+      l.totalMatches += 1;
+      await l.save();
+    }
 
-    await winnerUser.save();
-    await loserUser.save();
-
-    const winnerRank = getRank(winnerUser.rankingPoints).name;
-    const loserRank = getRank(loserUser.rankingPoints).name;
+    const winnerRank = getRank(winnerUsers[0].rankingPoints).name;
+    const loserRank = getRank(loserUsers[0].rankingPoints).name;
+    const winnerCaptain = winnerUsers.find((u) => u.discordId === winnerSide.captainId) || winnerUsers[0];
+    const loserCaptain = loserUsers.find((u) => u.discordId === loserSide.captainId) || loserUsers[0];
 
     const newMatch = await Match.create({
-      player1: winnerUser._id,
-      player2: loserUser._id,
+      player1: winnerCaptain._id,
+      player2: loserCaptain._id,
       result: 'player1',
-      winnerDiscordId,
-      loserDiscordId,
+      winnerDiscordId: winnerCaptain.discordId,
+      loserDiscordId: loserCaptain.discordId,
       winnerRank,
       loserRank,
       status: 'completed',
@@ -363,10 +400,14 @@ class GameEngine {
       try {
         const tournament = await Tournament.findById(match.player1.tournamentId);
         if (tournament) {
-          const wl = tournament.leaderboard.find(l => l.userId === winnerDiscordId);
-          const ll = tournament.leaderboard.find(l => l.userId === loserDiscordId);
-          if (wl) { wl.wins += 1; wl.points += pointsChange.winPoints; }
-          if (ll) { ll.losses += 1; ll.points = Math.max(0, (ll.points || 0) - pointsChange.lossPoints); }
+          for (const id of winnerMemberIds) {
+            const wl = tournament.leaderboard.find(l => l.userId === id);
+            if (wl) { wl.wins += 1; wl.points += pointsChange.winPoints; }
+          }
+          for (const id of loserMemberIds) {
+            const ll = tournament.leaderboard.find(l => l.userId === id);
+            if (ll) { ll.losses += 1; ll.points = Math.max(0, (ll.points || 0) - pointsChange.lossPoints); }
+          }
           await tournament.save();
         }
       } catch (e) { console.error('[GAME ENGINE] Tournament leaderboard update error:', e.message); }
@@ -376,7 +417,7 @@ class GameEngine {
 
     eventBus.emit('receiveMessage', {
       sender: 'System',
-      message: `✅ Match completed! ${winnerUser.discordName} wins!`,
+      message: `✅ Match completed! ${winnerCaptain.discordName} wins!`,
       time: new Date().toISOString(),
       isSystem: true,
       matchId,
@@ -384,10 +425,10 @@ class GameEngine {
 
     eventBus.emit('matchCompleted', {
       matchId,
-      winner: winnerUser.discordName,
-      winnerId: winnerDiscordId,
-      loser: loserUser.discordName,
-      loserId: loserDiscordId,
+      winner: winnerCaptain.discordName,
+      winnerId: winnerCaptain.discordId,
+      loser: loserCaptain.discordName,
+      loserId: loserCaptain.discordId,
       reason,
     }, { targets: [`match:${matchId}`, 'admin-room'], source: 'gameEngine' });
 
@@ -452,6 +493,20 @@ class GameEngine {
       console.error('[GAME ENGINE] Validation error:', e.message);
       return { valid: false, reason: 'Validation error' };
     }
+  }
+
+  async validateQueueEntity(entity) {
+    if (!entity) return { valid: false, reason: 'Invalid queue entity' };
+    if (!entity.teamMode) {
+      return this.validateUserState(entity.userId);
+    }
+    const members = entity.teamMemberIds || [];
+    if (!members.length) return { valid: false, reason: 'Team has no members' };
+    for (const memberId of members) {
+      const status = await this.validateUserState(memberId);
+      if (!status.valid) return { valid: false, reason: `Team member invalid: ${status.reason}` };
+    }
+    return { valid: true };
   }
 
   // ──────────────────────────────────────────────

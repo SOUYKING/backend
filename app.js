@@ -12,6 +12,7 @@ const accountRoutes = require('./routes/account');
 const tournamentRoutes = require('./routes/tournament');
 const matchmakingRoutes = require('./routes/matchmaking');
 const matchRoutes = require('./routes/match');
+const teamRoutes = require('./routes/teams');
 const adminRoutes = require('./routes/admin');
 const announcementRoutes = require('./routes/announcement');
 const staffNotificationRoutes = require('./routes/staffNotifications');
@@ -87,6 +88,7 @@ app.use('/account', accountRoutes);
 app.use('/tournament', tournamentRoutes);
 app.use('/matchmaking', matchRateLimit, matchmakingRoutes);
 app.use('/match', matchRoutes);
+app.use('/teams', teamRoutes);
 app.use('/admin', adminRateLimit, adminRoutes);
 app.use('/announcements', announcementRoutes);
 app.use('/staff-notifications', staffNotificationRoutes);
@@ -167,7 +169,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('joinQueue', async ({ tournamentId, epicName }) => {
+  socket.on('joinQueue', async ({ tournamentId, epicName, teamId }) => {
     if (!socket.userId || !tournamentId) {
       return socket.emit('error', { message: 'Missing data' });
     }
@@ -215,54 +217,121 @@ io.on('connection', (socket) => {
         return socket.emit('error', { message: 'Epic Games account not verified' });
       }
 
-      const isRegistered = tournament.participants?.some((p) => p.userId === socket.userId);
-      if (!isRegistered) {
+      const requiredTeamSize = tournament.type === '2v2' ? 2 : tournament.type === '3v3' ? 3 : tournament.type === '4v4' ? 4 : 1;
+      let player;
+      if (requiredTeamSize === 1) {
+        const isRegistered = tournament.participants?.some((p) => p.userId === socket.userId);
+        if (!isRegistered) {
+          tournament.participants = tournament.participants || [];
+          tournament.leaderboard = tournament.leaderboard || [];
+
+          tournament.participants.push({
+            userId: socket.userId,
+            discordName: user.discordName,
+            rankingPoints: user.rankingPoints,
+            epicName: user.epicGamesName,
+            registeredAt: new Date(),
+          });
+
+          tournament.leaderboard.push({
+            userId: socket.userId,
+            discordId: socket.userId,
+            discordName: user.discordName,
+            discordAvatar: user.discordAvatar || null,
+            wins: 0,
+            losses: 0,
+            points: 0,
+          });
+        }
+
+        const ext = (user.discordAvatar || '').startsWith('a_') ? 'gif' : 'png';
+        const avatarUrl = user.discordAvatar
+          ? `https://cdn.discordapp.com/avatars/${socket.userId}/${user.discordAvatar}.${ext}?size=256`
+          : null;
+
+        player = {
+          userId: socket.userId,
+          username: user.discordName,
+          rankingPoints: user.rankingPoints,
+          epicName: epicName || user.epicGamesName,
+          avatar: user.discordAvatar,
+          avatarUrl,
+          tournamentId: tournamentId,
+          socketId: socket.id,
+          role: user.role || 'player',
+          mapCode: tournament.mapCode,
+        };
+      } else {
+        if (!teamId) return socket.emit('error', { message: `This is a ${tournament.type} tournament. Select a team first.` });
+        const Team = require('./models/Team');
+        const memberUsers = require('./models/User');
+        const team = await Team.findById(teamId);
+        if (!team || !team.isActive) return socket.emit('error', { message: 'Team not found' });
+        if (team.size !== requiredTeamSize) return socket.emit('error', { message: `Team must be ${requiredTeamSize} players` });
+        if (team.captainDiscordId !== socket.userId) return socket.emit('error', { message: 'Only team captain can join queue' });
+        const acceptedMembers = (team.members || []).filter((m) => m.status === 'accepted');
+        if (acceptedMembers.length !== requiredTeamSize) return socket.emit('error', { message: `Team must have ${requiredTeamSize} accepted members` });
+
+        const memberIds = acceptedMembers.map((m) => m.discordId);
+        const teamMembers = await memberUsers.find({ discordId: { $in: memberIds } }).select('discordId discordName discordAvatar rankingPoints epicGamesName isBanned');
+        if (teamMembers.length !== requiredTeamSize) return socket.emit('error', { message: 'Team members not found' });
+        if (teamMembers.some((m) => m.isBanned)) return socket.emit('error', { message: 'A team member is banned' });
+
         tournament.participants = tournament.participants || [];
         tournament.leaderboard = tournament.leaderboard || [];
-
-        tournament.participants.push({
-          userId: socket.userId,
-          discordName: user.discordName,
-          rankingPoints: user.rankingPoints,
-          epicName: user.epicGamesName,
-          registeredAt: new Date(),
-        });
-
-        tournament.leaderboard.push({
-          userId: socket.userId,
-          discordId: socket.userId,
-          discordName: user.discordName,
-          discordAvatar: user.discordAvatar || null,
-          wins: 0,
-          losses: 0,
-          points: 0,
-        });
-
-        await tournament.save();
+        for (const member of teamMembers) {
+          const registered = tournament.participants.some((p) => p.userId === member.discordId);
+          if (!registered) {
+            tournament.participants.push({
+              userId: member.discordId,
+              discordName: member.discordName,
+              rankingPoints: member.rankingPoints,
+              epicName: member.epicGamesName,
+              registeredAt: new Date(),
+              teamId: team._id.toString(),
+              teamName: team.name,
+            });
+            tournament.leaderboard.push({
+              userId: member.discordId,
+              discordId: member.discordId,
+              discordName: member.discordName,
+              discordAvatar: member.discordAvatar || null,
+              wins: 0,
+              losses: 0,
+              points: 0,
+            });
+          }
+        }
+        const alreadyLocked = (team.tournamentLocks || []).some((lock) => String(lock.tournamentId) === String(tournament._id));
+        if (!alreadyLocked) {
+          team.tournamentLocks.push({ tournamentId: String(tournament._id), lockedAt: new Date() });
+          await team.save();
+        }
+        const avgRp = Math.round(teamMembers.reduce((sum, m) => sum + (m.rankingPoints || 0), 0) / requiredTeamSize);
+        player = {
+          userId: `team:${team._id}`,
+          username: team.name,
+          rankingPoints: avgRp,
+          epicName: team.name,
+          avatar: null,
+          avatarUrl: null,
+          tournamentId: tournamentId,
+          socketId: socket.id,
+          role: user.role || 'player',
+          mapCode: tournament.mapCode,
+          teamMode: true,
+          teamId: String(team._id),
+          teamName: team.name,
+          teamSize: requiredTeamSize,
+          teamMemberIds: memberIds,
+          captainId: team.captainDiscordId,
+        };
       }
 
       if (tournament.status !== 'active') {
         tournament.status = 'active';
-        await tournament.save();
       }
-
-      const ext = (user.discordAvatar || '').startsWith('a_') ? 'gif' : 'png';
-      const avatarUrl = user.discordAvatar
-        ? `https://cdn.discordapp.com/avatars/${socket.userId}/${user.discordAvatar}.${ext}?size=256`
-        : null;
-
-      const player = {
-        userId: socket.userId,
-        username: user.discordName,
-        rankingPoints: user.rankingPoints,
-        epicName: epicName || user.epicGamesName,
-        avatar: user.discordAvatar,
-        avatarUrl,
-        tournamentId: tournamentId,
-        socketId: socket.id,
-        role: user.role || 'player',
-        mapCode: tournament.mapCode,
-      };
+      await tournament.save();
 
       const queueResult = await GameEngine.joinQueue(player);
       if (!queueResult.success) {
@@ -271,7 +340,8 @@ io.on('connection', (socket) => {
 
       socket.emit('waiting', { message: 'Waiting for opponent...', queueSize: GameEngine.getQueueSize(tournamentId) });
 
-      const createdMatch = GameEngine.getActiveMatchForUser(socket.userId);
+      const activeLookupId = player.teamMode ? player.userId : socket.userId;
+      const createdMatch = GameEngine.getActiveMatchForUser(activeLookupId);
       if (createdMatch) {
         const p1 = createdMatch.player1;
         const p2 = createdMatch.player2;
@@ -323,7 +393,15 @@ io.on('connection', (socket) => {
     if (!activeMatch) return;
 
     // Verify this socket's user is actually a participant in this match
-    if (!socket.userId || (socket.userId !== activeMatch.player1.userId && socket.userId !== activeMatch.player2.userId)) {
+    if (
+      !socket.userId ||
+      (
+        socket.userId !== activeMatch.player1.userId &&
+        socket.userId !== activeMatch.player2.userId &&
+        !(activeMatch.player1.teamMemberIds || []).includes(socket.userId) &&
+        !(activeMatch.player2.teamMemberIds || []).includes(socket.userId)
+      )
+    ) {
       // Not a participant — silently redirect to viewer mode
       socket.emit('joinMatchAsViewer', { matchId, viewerName: playerName || 'Viewer' });
       return;
