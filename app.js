@@ -41,13 +41,27 @@ const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 const allowedOrigins = [
   FRONTEND_URL,
   'http://localhost:3000',
+  'http://127.0.0.1:3000',
   'https://backend-97zg.onrender.com',
+  'https://frontend-nine-zeta-89.vercel.app',
+  'https://fntarena.online',
+  'https://www.fntarena.online',
   process.env.FRONTEND_URL2,
 ].filter(Boolean);
 
+const allowedOriginPatterns = [
+  /^https:\/\/.*\.vercel\.app$/,
+];
+
+const isAllowedOrigin = (origin = '') => {
+  if (allowedOrigins.includes(origin)) return true;
+  return allowedOriginPatterns.some((pattern) => pattern.test(origin));
+};
+
 const corsOptions = {
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    if (!origin || isAllowedOrigin(origin)) return callback(null, true);
+    console.warn(`[CORS_BLOCKED] origin=${origin}`);
     callback(new Error('Not allowed by CORS'));
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
