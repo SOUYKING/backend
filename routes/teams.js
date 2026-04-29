@@ -49,7 +49,7 @@ router.get('/search-users', async (req, res) => {
       discordName: { $regex: q, $options: 'i' },
       discordId: { $ne: req.user.id },
       isBanned: { $ne: true },
-    }).select('discordId discordName discordAvatar').limit(10);
+    }).select('discordId discordName discordAvatar epicGamesName').limit(10);
     res.json(users);
   } catch (error) {
     console.error('Search users error:', error);
