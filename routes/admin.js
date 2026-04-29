@@ -450,6 +450,104 @@ router.post('/users/:discordId/remove-warning/:warningId', async (req, res) => {
   }
 });
 
+router.post('/users/:discordId/clear-warnings', async (req, res) => {
+  try {
+    const user = await User.findOne({ discordId: req.params.discordId });
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    let cleared = 0;
+    user.warnings.forEach((warning) => {
+      if (warning.isActive) {
+        warning.isActive = false;
+        cleared += 1;
+      }
+    });
+
+    await user.save();
+    await logAction(req, 'clear_warnings', user.discordId, user.discordName, { cleared });
+
+    res.json({ message: `Cleared ${cleared} warning(s)`, cleared });
+  } catch (error) {
+    console.error('Clear warnings error:', error);
+    res.status(500).json({ message: 'Failed to clear warnings' });
+  }
+});
+
+router.post('/users/:discordId/remove-strike', async (req, res) => {
+  try {
+    const user = await User.findOne({ discordId: req.params.discordId });
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    if (!user.strikes || user.strikes <= 0) {
+      return res.status(400).json({ message: 'User has no strikes to remove' });
+    }
+
+    user.strikes = Math.max(0, (user.strikes || 0) - 1);
+    if (user.strikesHistory?.length) {
+      user.strikesHistory.pop();
+    }
+
+    // If the user was auto-banned by strikes, allow manual strike rollback.
+    if (user.isBanned && typeof user.banReason === 'string' && user.banReason.includes('Auto-banned: 3 strikes accumulated')) {
+      user.isBanned = false;
+      user.banReason = null;
+      user.bannedAt = null;
+      user.bannedBy = null;
+    }
+
+    await user.save();
+    await logAction(req, 'remove_strike', user.discordId, user.discordName, { strikes: user.strikes });
+
+    res.json({ message: `Strike removed. Current strikes: ${user.strikes}`, strikes: user.strikes });
+  } catch (error) {
+    console.error('Remove strike error:', error);
+    res.status(500).json({ message: 'Failed to remove strike' });
+  }
+});
+
+router.post('/users/:discordId/update-epic', async (req, res) => {
+  try {
+    const { epicGamesName, epicVerified = true } = req.body;
+    const normalizedEpicName = typeof epicGamesName === 'string' ? epicGamesName.trim() : '';
+
+    if (!normalizedEpicName) {
+      return res.status(400).json({ message: 'epicGamesName is required' });
+    }
+
+    const user = await User.findOne({ discordId: req.params.discordId });
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const previousEpic = user.epicGamesName || null;
+    user.epicGamesName = normalizedEpicName;
+    user.epicVerified = !!epicVerified;
+    user.lastEpicUpdate = new Date();
+
+    await user.save();
+    await logAction(req, 'admin_update_epic', user.discordId, user.discordName, {
+      oldEpicGamesName: previousEpic,
+      newEpicGamesName: normalizedEpicName,
+      epicVerified: !!epicVerified,
+    });
+
+    res.json({
+      message: 'Epic name updated by admin',
+      epicGamesName: user.epicGamesName,
+      epicVerified: user.epicVerified,
+    });
+  } catch (error) {
+    console.error('Admin update epic error:', error);
+    res.status(500).json({ message: 'Failed to update Epic name' });
+  }
+});
+
 // ============ ANTICHEAT ============
 router.get('/anticheat/alerts', async (req, res) => {
   try {
@@ -681,7 +779,8 @@ router.get('/matches', async (req, res) => {
 
 router.get('/matches/:matchId', async (req, res) => {
   try {
-    const match = await Match.findById(req.params.matchId);
+    const match = await Match.findById(req.params.matchId)
+      .populate('player1 player2', 'discordId discordName discordAvatar epicGamesName rankingPoints');
     if (!match) {
       return res.status(404).json({ message: 'Match not found' });
     }
