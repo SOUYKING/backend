@@ -48,7 +48,7 @@ const allowedOrigins = [
 const corsOptions = {
   origin: (origin, callback) => {
     if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
-    callback(null, true);
+    callback(new Error('Not allowed by CORS'));
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   credentials: true,
@@ -301,6 +301,9 @@ io.on('connection', (socket) => {
 
   socket.on('joinMatch', ({ matchId, playerName }) => {
     if (!matchId) return;
+    if (!socket.userId) {
+      return socket.emit('chatError', { message: 'Please refresh and rejoin the match.' });
+    }
 
     const activeMatch = GameEngine.getActiveMatch(matchId);
     if (!activeMatch) return;
@@ -355,6 +358,9 @@ io.on('connection', (socket) => {
 
   socket.on('joinMatchAsViewer', ({ matchId, viewerName }) => {
     if (!matchId) return;
+    if (!socket.userId) {
+      return socket.emit('chatError', { message: 'Please refresh and log in again.' });
+    }
 
     const isNewJoin = ensureJoinedRoom(socket, matchId);
     trackSocketJoin(socket.id, matchId, 'viewer');
@@ -369,14 +375,6 @@ io.on('connection', (socket) => {
         if (activeMatch.chatLogs.length > 0) {
           socket.emit('chatHistory', { chatLogs: activeMatch.chatLogs });
         }
-        const msg = {
-          sender: 'System',
-          message: `👁️ ${viewerName || 'A viewer'} joined as spectator.`,
-          time: new Date().toISOString(),
-          isSystem: true,
-        };
-        eventBus.emit('receiveMessage', { ...msg, matchId }, { targets: [`match:${matchId}`], source: 'chat' });
-        activeMatch.chatLogs.push({ ...msg, time: new Date(msg.time) });
       }
     }
   });
