@@ -385,19 +385,39 @@ router.get('/:id/leaderboard', async (req, res) => {
       return res.status(404).json({ message: 'Tournament not found' });
     }
     const t = tournament.toObject();
-    const participantByUserId = Object.fromEntries(
-      (t.participants || []).map((p) => [p.userId, p]),
-    );
-    const entries = [...(t.leaderboard || [])]
-      .map((entry) => {
-        const e = { ...entry };
-        const p = participantByUserId[e.userId];
-        return {
-          ...e,
-          teamId: p?.teamId || null,
-          teamName: p?.teamName || null,
-          epicName: p?.epicName || null,
-        };
+    const participantByUserId = {};
+    for (const p of t.participants || []) {
+      if (p.userId == null) continue;
+      participantByUserId[p.userId] = p;
+      participantByUserId[String(p.userId)] = p;
+    }
+    const rawEntries = [...(t.leaderboard || [])].map((entry) => {
+      const e = { ...entry };
+      const uid = e.userId;
+      const p = participantByUserId[uid] || participantByUserId[String(uid)];
+      let teamId = p?.teamId != null && String(p.teamId).trim() !== '' ? String(p.teamId).trim() : null;
+      let teamName = p?.teamName && String(p.teamName).trim() !== '' ? String(p.teamName).trim() : null;
+      return {
+        ...e,
+        teamId,
+        teamName,
+        epicName: p?.epicName || e.epicName || null,
+      };
+    });
+
+    const teamIdSet = new Set(rawEntries.map((e) => e.teamId).filter(Boolean));
+    const teamIds = [...teamIdSet];
+    const teamDocs = teamIds.length
+      ? await Team.find({ _id: { $in: teamIds } }).select('name').lean()
+      : [];
+    const nameByTeamId = Object.fromEntries(teamDocs.map((doc) => [String(doc._id), doc.name]));
+
+    const entries = rawEntries
+      .map((e) => {
+        if (!e.teamName && e.teamId && nameByTeamId[e.teamId]) {
+          return { ...e, teamName: nameByTeamId[e.teamId] };
+        }
+        return e;
       })
       .sort((a, b) => (b.points || 0) - (a.points || 0));
 
