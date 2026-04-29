@@ -1,5 +1,6 @@
 const User = require('../models/User');
 const Match = require('../models/Match');
+const Team = require('../models/Team');
 const Tournament = require('../models/Tournament');
 const StaffNotification = require('../models/StaffNotification');
 const eventBus = require('../utils/eventBus');
@@ -376,6 +377,9 @@ class GameEngine {
     const winnerCaptain = winnerUsers.find((u) => u.discordId === winnerSide.captainId) || winnerUsers[0];
     const loserCaptain = loserUsers.find((u) => u.discordId === loserSide.captainId) || loserUsers[0];
 
+    const winnerTeamId = winnerSide.teamMode && winnerSide.teamId ? String(winnerSide.teamId) : null;
+    const loserTeamId = loserSide.teamMode && loserSide.teamId ? String(loserSide.teamId) : null;
+
     const newMatch = await Match.create({
       player1: winnerCaptain._id,
       player2: loserCaptain._id,
@@ -392,8 +396,25 @@ class GameEngine {
       chatLogs: match.chatLogs || [],
       resolvedBy: reason === 'force' ? match.resolvedBy || 'admin' : null,
       tournamentId: match.player1.tournamentId,
+      winnerTeamId,
+      loserTeamId,
       date: new Date(),
     });
+
+    if (winnerTeamId) {
+      try {
+        await Team.updateOne({ _id: winnerTeamId, isActive: true }, { $inc: { statsWins: 1 } });
+      } catch (e) {
+        console.warn('[GAME ENGINE] Team stats win increment failed:', e.message);
+      }
+    }
+    if (loserTeamId) {
+      try {
+        await Team.updateOne({ _id: loserTeamId, isActive: true }, { $inc: { statsLosses: 1 } });
+      } catch (e) {
+        console.warn('[GAME ENGINE] Team stats loss increment failed:', e.message);
+      }
+    }
 
     // Update tournament leaderboard
     if (match.player1.tournamentId) {

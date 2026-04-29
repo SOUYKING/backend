@@ -53,6 +53,18 @@ router.get('/mine', async (req, res) => {
   }
 });
 
+router.get('/invites', async (req, res) => {
+  try {
+    const invites = await TeamInvite.find({ toDiscordId: req.user.id, status: 'pending' })
+      .populate('teamId')
+      .sort({ createdAt: -1 });
+    res.json(invites);
+  } catch (error) {
+    console.error('Get invites error:', error);
+    res.status(500).json({ message: 'Failed to fetch invites' });
+  }
+});
+
 router.post('/create', async (req, res) => {
   try {
     const name = (req.body.name || '').trim();
@@ -128,6 +140,109 @@ router.post('/create', async (req, res) => {
   }
 });
 
+router.get('/:teamId/detail', async (req, res) => {
+  try {
+    const team = await Team.findById(req.params.teamId);
+    if (!team || !team.isActive) return res.status(404).json({ message: 'Team not found' });
+
+    const isMember = (team.members || []).some((m) => m.discordId === req.user.id);
+    const isCaptain = team.captainDiscordId === req.user.id;
+    if (!isMember && !isCaptain) {
+      return res.status(403).json({ message: 'Not a member of this team' });
+    }
+
+    const ids = [...new Set((team.members || []).map((m) => m.discordId))];
+    const users = await User.find({ discordId: { $in: ids } }).select('discordId discordName discordAvatar');
+    const userMap = Object.fromEntries(users.map((u) => [u.discordId, u]));
+
+    const roster = (team.members || []).map((m) => ({
+      discordId: m.discordId,
+      discordName: m.discordName,
+      status: m.status,
+      isCaptain: m.discordId === team.captainDiscordId,
+      discordAvatar: userMap[m.discordId]?.discordAvatar || null,
+    }));
+
+    const accepted = roster.filter((m) => m.status === 'accepted');
+    const pending = roster.filter((m) => m.status === 'pending');
+    const readyForQueue = accepted.length === team.size;
+
+    res.json({
+      team: {
+        _id: team._id,
+        name: team.name,
+        size: team.size,
+        captainDiscordId: team.captainDiscordId,
+        captainDiscordName: team.captainDiscordName,
+        statsWins: team.statsWins ?? 0,
+        statsLosses: team.statsLosses ?? 0,
+        tournamentLocks: team.tournamentLocks || [],
+        createdAt: team.createdAt,
+      },
+      roster,
+      viewer: { isCaptain, discordId: req.user.id },
+      meta: {
+        acceptedCount: accepted.length,
+        pendingCount: pending.length,
+        readyForQueue,
+      },
+    });
+  } catch (error) {
+    console.error('Team detail error:', error);
+    res.status(500).json({ message: 'Failed to load team' });
+  }
+});
+
+router.post('/:teamId/leave', async (req, res) => {
+  try {
+    const team = await Team.findById(req.params.teamId);
+    if (!team || !team.isActive) return res.status(404).json({ message: 'Team not found' });
+    if (team.captainDiscordId === req.user.id) {
+      return res.status(400).json({ message: 'Captain cannot leave this way — delete the team instead.' });
+    }
+    if ((team.tournamentLocks || []).length > 0) {
+      return res.status(400).json({ message: 'Team is locked in a tournament' });
+    }
+    const before = (team.members || []).length;
+    team.members = (team.members || []).filter((m) => m.discordId !== req.user.id);
+    if (team.members.length === before) return res.status(404).json({ message: 'You are not on this team' });
+    await team.save();
+    await TeamInvite.updateMany(
+      { teamId: team._id, toDiscordId: req.user.id, status: 'pending' },
+      { $set: { status: 'cancelled', respondedAt: new Date() } },
+    );
+    res.json({ message: 'You left the team' });
+  } catch (error) {
+    console.error('Leave team error:', error);
+    res.status(500).json({ message: 'Failed to leave team' });
+  }
+});
+
+router.delete('/:teamId/members/:memberDiscordId', async (req, res) => {
+  try {
+    const { teamId, memberDiscordId } = req.params;
+    const team = await Team.findById(teamId);
+    if (!team || !team.isActive) return res.status(404).json({ message: 'Team not found' });
+    if (team.captainDiscordId !== req.user.id) return res.status(403).json({ message: 'Only captain can remove members' });
+    if (memberDiscordId === team.captainDiscordId) return res.status(400).json({ message: 'Cannot remove captain' });
+    if ((team.tournamentLocks || []).length > 0) return res.status(400).json({ message: 'Team is locked in a tournament' });
+
+    const exists = (team.members || []).some((m) => m.discordId === memberDiscordId);
+    if (!exists) return res.status(404).json({ message: 'Member not found' });
+
+    team.members = (team.members || []).filter((m) => m.discordId !== memberDiscordId);
+    await team.save();
+    await TeamInvite.updateMany(
+      { teamId: team._id, toDiscordId: memberDiscordId, status: 'pending' },
+      { $set: { status: 'cancelled', respondedAt: new Date() } },
+    );
+    res.json({ message: 'Member removed' });
+  } catch (error) {
+    console.error('Remove member error:', error);
+    res.status(500).json({ message: 'Failed to remove member' });
+  }
+});
+
 router.delete('/:teamId', async (req, res) => {
   try {
     const team = await Team.findById(req.params.teamId);
@@ -142,18 +257,6 @@ router.delete('/:teamId', async (req, res) => {
   } catch (error) {
     console.error('Delete team error:', error);
     res.status(500).json({ message: 'Failed to delete team' });
-  }
-});
-
-router.get('/invites', async (req, res) => {
-  try {
-    const invites = await TeamInvite.find({ toDiscordId: req.user.id, status: 'pending' })
-      .populate('teamId')
-      .sort({ createdAt: -1 });
-    res.json(invites);
-  } catch (error) {
-    console.error('Get invites error:', error);
-    res.status(500).json({ message: 'Failed to fetch invites' });
   }
 });
 
@@ -188,6 +291,15 @@ router.post('/:teamId/invite', async (req, res) => {
       toDiscordName: targetUser.discordName,
     });
 
+    // Reserve a pending slot so team capacity stays consistent while invite is open.
+    team.members.push({
+      discordId: targetUser.discordId,
+      discordName: targetUser.discordName,
+      status: 'pending',
+      invitedBy: req.user.id,
+    });
+    await team.save();
+
     res.status(201).json(invite);
   } catch (error) {
     console.error('Invite member error:', error);
@@ -208,6 +320,11 @@ router.post('/invites/:inviteId/respond', async (req, res) => {
     if (invite.toDiscordId !== req.user.id) return res.status(403).json({ message: 'Not allowed' });
 
     if (action === 'decline') {
+      const team = await Team.findById(invite.teamId);
+      if (team && team.isActive) {
+        team.members = (team.members || []).filter((m) => !(m.discordId === req.user.id && m.status === 'pending'));
+        await team.save();
+      }
       invite.status = 'declined';
       invite.respondedAt = new Date();
       await invite.save();
@@ -217,16 +334,22 @@ router.post('/invites/:inviteId/respond', async (req, res) => {
     const team = await Team.findById(invite.teamId);
     if (!team || !team.isActive) return res.status(404).json({ message: 'Team no longer available' });
     if ((team.tournamentLocks || []).length > 0) return res.status(400).json({ message: 'Team is locked in a tournament' });
-    if (team.members.some((m) => m.discordId === req.user.id)) return res.status(400).json({ message: 'Already in team' });
-    if (team.members.length >= team.size) return res.status(400).json({ message: 'Team is already full' });
+    const existingMember = team.members.find((m) => m.discordId === req.user.id);
+    if (existingMember && existingMember.status === 'accepted') return res.status(400).json({ message: 'Already in team' });
+    if (!existingMember && team.members.length >= team.size) return res.status(400).json({ message: 'Team is already full' });
 
     const me = await User.findOne({ discordId: req.user.id }).select('discordName');
-    team.members.push({
-      discordId: req.user.id,
-      discordName: me?.discordName || req.user.username || 'Player',
-      status: 'accepted',
-      invitedBy: invite.fromDiscordId,
-    });
+    if (existingMember && existingMember.status === 'pending') {
+      existingMember.status = 'accepted';
+      existingMember.discordName = me?.discordName || req.user.username || existingMember.discordName || 'Player';
+    } else {
+      team.members.push({
+        discordId: req.user.id,
+        discordName: me?.discordName || req.user.username || 'Player',
+        status: 'accepted',
+        invitedBy: invite.fromDiscordId,
+      });
+    }
     await team.save();
 
     invite.status = 'accepted';

@@ -19,6 +19,8 @@ const teamSchema = new mongoose.Schema({
     tournamentId: { type: String, required: true },
     lockedAt: { type: Date, default: Date.now },
   }],
+  statsWins: { type: Number, default: 0 },
+  statsLosses: { type: Number, default: 0 },
   createdAt: { type: Date, default: Date.now },
 });
 

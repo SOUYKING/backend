@@ -37,6 +37,8 @@ const MatchSchema = new mongoose.Schema({
   winnerRank: { type: String, default: null },
   loserRank: { type: String, default: null },
   tournamentId: { type: mongoose.Schema.Types.ObjectId, ref: "Tournament", required: true },
+  winnerTeamId: { type: String, default: null },
+  loserTeamId: { type: String, default: null },
   date: { type: Date, default: Date.now },
 });
 
