@@ -13,6 +13,30 @@ async function pullTeamRosterLocksForTournament(tournamentId) {
   );
 }
 
+/** Map discordId -> { teamId, teamName } for teams locked into this tournament (fixes roster grouping). */
+async function squadDiscordToTeamMap(tournamentId, tournamentType) {
+  const squad = new Set(['2v2', '3v3', '4v4']);
+  if (!squad.has(tournamentType || '')) return new Map();
+  const tid = String(tournamentId);
+  const teams = await Team.find({ 'tournamentLocks.tournamentId': tid })
+    .select('name captainDiscordId members')
+    .lean();
+  const map = new Map();
+  for (const tm of teams) {
+    const teamId = String(tm._id);
+    const teamName = tm.name;
+    if (tm.captainDiscordId) {
+      map.set(String(tm.captainDiscordId), { teamId, teamName });
+    }
+    for (const m of tm.members || []) {
+      if (m.status === 'accepted' && m.discordId) {
+        map.set(String(m.discordId), { teamId, teamName });
+      }
+    }
+  }
+  return map;
+}
+
 const getTournamentLifecycle = (tournament) => {
   const now = new Date();
   const startDate = new Date(tournament.startDate);
@@ -385,6 +409,7 @@ router.get('/:id/leaderboard', async (req, res) => {
       return res.status(404).json({ message: 'Tournament not found' });
     }
     const t = tournament.toObject();
+    const discordTeamMap = await squadDiscordToTeamMap(t._id, t.type);
     const participantByUserId = {};
     for (const p of t.participants || []) {
       if (p.userId == null) continue;
@@ -397,6 +422,14 @@ router.get('/:id/leaderboard', async (req, res) => {
       const p = participantByUserId[uid] || participantByUserId[String(uid)];
       let teamId = p?.teamId != null && String(p.teamId).trim() !== '' ? String(p.teamId).trim() : null;
       let teamName = p?.teamName && String(p.teamName).trim() !== '' ? String(p.teamName).trim() : null;
+      if (!teamId) {
+        const did = e.discordId != null ? String(e.discordId) : uid != null ? String(uid) : '';
+        const fromLock = did ? discordTeamMap.get(did) : null;
+        if (fromLock) {
+          teamId = fromLock.teamId;
+          teamName = teamName || fromLock.teamName;
+        }
+      }
       return {
         ...e,
         teamId,

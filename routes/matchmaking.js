@@ -83,17 +83,22 @@ router.post('/join', authenticate, async (req, res) => {
       if (memberUsers.length !== requiredTeamSize) return res.status(400).json({ message: 'Some team members are missing profiles' });
       if (memberUsers.some((m) => m.isBanned)) return res.status(403).json({ message: 'A team member is banned' });
 
+      const teamIdStr = String(team._id);
+      const teamNameStr = team.name;
+
       for (const member of memberUsers) {
-        const alreadyRegistered = tournament.participants.some((p) => p.userId === member.discordId);
-        if (!alreadyRegistered) {
+        const participant = tournament.participants.find(
+          (p) => String(p.userId) === String(member.discordId),
+        );
+        if (!participant) {
           tournament.participants.push({
             userId: member.discordId,
             discordName: member.discordName,
             rankingPoints: member.rankingPoints,
             epicName: member.epicGamesName,
             registeredAt: new Date(),
-            teamId: team._id.toString(),
-            teamName: team.name,
+            teamId: teamIdStr,
+            teamName: teamNameStr,
           });
           tournament.leaderboard.push({
             userId: member.discordId,
@@ -104,9 +109,25 @@ router.post('/join', authenticate, async (req, res) => {
             losses: 0,
             points: 0,
           });
+        } else {
+          participant.teamId = teamIdStr;
+          participant.teamName = teamNameStr;
+          const lbRow = tournament.leaderboard.find((l) => String(l.userId) === String(member.discordId));
+          if (!lbRow) {
+            tournament.leaderboard.push({
+              userId: member.discordId,
+              discordId: member.discordId,
+              discordName: member.discordName,
+              discordAvatar: member.discordAvatar || null,
+              wins: 0,
+              losses: 0,
+              points: 0,
+            });
+          }
         }
       }
 
+      tournament.markModified('participants');
       await tournament.save();
 
       const avgRp = Math.round(memberUsers.reduce((sum, m) => sum + (m.rankingPoints || 0), 0) / requiredTeamSize);
