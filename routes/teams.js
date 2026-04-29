@@ -1,10 +1,20 @@
 const express = require('express');
 const authenticate = require('../middlewares/authenticate');
+const GameEngine = require('../core/GameEngine');
 const Team = require('../models/Team');
 const TeamInvite = require('../models/TeamInvite');
 const User = require('../models/User');
 
 const router = express.Router();
+
+/** DB locks can linger after queue leave, match end, server restart, or deleted tournaments — clear if not live. */
+async function clearStaleTournamentLocks(team) {
+  if (!team?.tournamentLocks?.length) return;
+  if (!GameEngine.isTeamInLiveQueueOrMatch(String(team._id))) {
+    team.tournamentLocks = [];
+    await team.save();
+  }
+}
 
 const TEAM_MODE_ENABLED = process.env.TEAM_MODE_ENABLED !== 'false';
 const isTeamTesterRole = (role) => ['admin', 'owner', 'staff', 'content_creator'].includes((role || '').toLowerCase());
@@ -46,6 +56,9 @@ router.get('/mine', async (req, res) => {
     };
     if ([2, 3, 4].includes(size)) query.size = size;
     const teams = await Team.find(query).sort({ createdAt: -1 });
+    for (const t of teams) {
+      await clearStaleTournamentLocks(t);
+    }
     res.json(teams);
   } catch (error) {
     console.error('Get my teams error:', error);
@@ -197,6 +210,7 @@ router.post('/:teamId/leave', async (req, res) => {
   try {
     const team = await Team.findById(req.params.teamId);
     if (!team || !team.isActive) return res.status(404).json({ message: 'Team not found' });
+    await clearStaleTournamentLocks(team);
     if (team.captainDiscordId === req.user.id) {
       return res.status(400).json({ message: 'Captain cannot leave this way — delete the team instead.' });
     }
@@ -223,6 +237,7 @@ router.delete('/:teamId/members/:memberDiscordId', async (req, res) => {
     const { teamId, memberDiscordId } = req.params;
     const team = await Team.findById(teamId);
     if (!team || !team.isActive) return res.status(404).json({ message: 'Team not found' });
+    await clearStaleTournamentLocks(team);
     if (team.captainDiscordId !== req.user.id) return res.status(403).json({ message: 'Only captain can remove members' });
     if (memberDiscordId === team.captainDiscordId) return res.status(400).json({ message: 'Cannot remove captain' });
     if ((team.tournamentLocks || []).length > 0) return res.status(400).json({ message: 'Team is locked in a tournament' });
@@ -247,6 +262,7 @@ router.delete('/:teamId', async (req, res) => {
   try {
     const team = await Team.findById(req.params.teamId);
     if (!team || !team.isActive) return res.status(404).json({ message: 'Team not found' });
+    await clearStaleTournamentLocks(team);
     if (team.captainDiscordId !== req.user.id) return res.status(403).json({ message: 'Only captain can delete team' });
     if ((team.tournamentLocks || []).length > 0) return res.status(400).json({ message: 'Cannot delete team while locked in tournament' });
 
@@ -268,6 +284,7 @@ router.post('/:teamId/invite', async (req, res) => {
 
     const team = await Team.findById(teamId);
     if (!team || !team.isActive) return res.status(404).json({ message: 'Team not found' });
+    await clearStaleTournamentLocks(team);
     if (team.captainDiscordId !== req.user.id) return res.status(403).json({ message: 'Only captain can invite players' });
     if ((team.tournamentLocks || []).length > 0) return res.status(400).json({ message: 'Team is locked in a tournament' });
 
@@ -333,6 +350,7 @@ router.post('/invites/:inviteId/respond', async (req, res) => {
 
     const team = await Team.findById(invite.teamId);
     if (!team || !team.isActive) return res.status(404).json({ message: 'Team no longer available' });
+    await clearStaleTournamentLocks(team);
     if ((team.tournamentLocks || []).length > 0) return res.status(400).json({ message: 'Team is locked in a tournament' });
     const existingMember = team.members.find((m) => m.discordId === req.user.id);
     if (existingMember && existingMember.status === 'accepted') return res.status(400).json({ message: 'Already in team' });

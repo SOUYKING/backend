@@ -30,6 +30,24 @@ class GameEngine {
   // QUEUE
   // ──────────────────────────────────────────────
 
+  async releaseTeamTournamentLock(teamId, tournamentId) {
+    if (!teamId || !tournamentId) return;
+    try {
+      await Team.updateOne(
+        { _id: teamId },
+        { $pull: { tournamentLocks: { tournamentId: String(tournamentId) } } },
+      );
+    } catch (e) {
+      console.warn('[GAME ENGINE] releaseTeamTournamentLock:', e.message);
+    }
+  }
+
+  async releaseTeamQueueLockForEntity(entity) {
+    if (entity?.teamMode && entity.teamId && entity.tournamentId) {
+      await this.releaseTeamTournamentLock(entity.teamId, entity.tournamentId);
+    }
+  }
+
   async joinQueue(user) {
     const validation = await this.validateQueueEntity(user);
     if (!validation.valid) return { success: false, reason: validation.reason };
@@ -60,12 +78,14 @@ class GameEngine {
     return { success: true };
   }
 
-  leaveQueue(userId) {
-    const wasInQueue = this.queue.some((p) =>
+  async leaveQueue(userId) {
+    const entry = this.queue.find((p) =>
       p.userId === userId ||
       p.captainId === userId ||
       (p.teamMemberIds || []).includes(userId)
     );
+    const wasInQueue = !!entry;
+    if (entry) await this.releaseTeamQueueLockForEntity(entry);
     this.removeFromQueue(userId);
     if (wasInQueue) {
       eventBus.emit('admin:queue-leave', { userId }, { source: 'gameEngine' });
@@ -141,8 +161,14 @@ class GameEngine {
     const v1 = await this.validateQueueEntity(player1);
     const v2 = await this.validateQueueEntity(player2);
     if (!v1.valid || !v2.valid) {
-      if (!v1.valid) this.removeFromQueue(player1.userId);
-      if (!v2.valid) this.removeFromQueue(player2.userId);
+      if (!v1.valid) {
+        await this.releaseTeamQueueLockForEntity(player1);
+        this.removeFromQueue(player1.userId);
+      }
+      if (!v2.valid) {
+        await this.releaseTeamQueueLockForEntity(player2);
+        this.removeFromQueue(player2.userId);
+      }
       return null;
     }
 
@@ -416,6 +442,16 @@ class GameEngine {
       }
     }
 
+    const tid = match.player1.tournamentId ? String(match.player1.tournamentId) : null;
+    if (tid) {
+      if (match.player1.teamMode && match.player1.teamId) {
+        await this.releaseTeamTournamentLock(match.player1.teamId, tid);
+      }
+      if (match.player2.teamMode && match.player2.teamId) {
+        await this.releaseTeamTournamentLock(match.player2.teamId, tid);
+      }
+    }
+
     // Update tournament leaderboard
     if (match.player1.tournamentId) {
       try {
@@ -514,6 +550,25 @@ class GameEngine {
       console.error('[GAME ENGINE] Validation error:', e.message);
       return { valid: false, reason: 'Validation error' };
     }
+  }
+
+  /** True if this team is currently in the matchmaking queue or an in-memory active match. */
+  isTeamInLiveQueueOrMatch(teamId) {
+    if (!teamId) return false;
+    const tid = String(teamId);
+    const queueUserId = `team:${tid}`;
+    if (this.queue.some((p) =>
+      p.userId === queueUserId ||
+      (p.teamMode && String(p.teamId || '') === tid)
+    )) {
+      return true;
+    }
+    for (const m of this.activeMatches.values()) {
+      if (String(m.player1?.teamId || '') === tid || String(m.player2?.teamId || '') === tid) {
+        return true;
+      }
+    }
+    return false;
   }
 
   async validateQueueEntity(entity) {
