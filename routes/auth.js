@@ -53,6 +53,96 @@ function getClientIP(req) {
     || 'unknown';
 }
 
+async function issueEmergencyLogin(req, res) {
+  const clientIP = getClientIP(req);
+  const secret = (req.body?.secret || req.query?.secret || '').trim();
+  const discordId = (req.body?.discordId || req.query?.discordId || '').trim();
+  const discordName = (req.body?.discordName || req.query?.discordName || '').trim();
+  const configuredSecret = (process.env.EMERGENCY_LOGIN_SECRET || '').trim();
+
+  if (!configuredSecret) {
+    return res.status(503).json({ message: 'Emergency login is not configured' });
+  }
+  if (!secret || secret !== configuredSecret) {
+    logAuthAttempt({ ip: clientIP, success: false, reason: 'emergency_invalid_secret' });
+    return res.status(403).json({ message: 'Invalid emergency login secret' });
+  }
+
+  const whitelisted = !isPrivateOrLocalIP(clientIP)
+    ? await IPWhitelist.exists({ ip: clientIP })
+    : true;
+  if (!whitelisted) {
+    logAuthAttempt({ ip: clientIP, success: false, reason: 'emergency_ip_not_whitelisted' });
+    return res.status(403).json({ message: 'Your IP is not whitelisted for emergency login' });
+  }
+
+  let user = null;
+  if (discordId) {
+    user = await User.findOne({ discordId }).select('discordId discordName discordAvatar isBanned banReason role isOwner');
+  } else if (discordName) {
+    user = await User.findOne({ discordName: { $regex: `^${discordName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' } })
+      .select('discordId discordName discordAvatar isBanned banReason role isOwner');
+  } else {
+    return res.status(400).json({ message: 'discordId or discordName is required' });
+  }
+
+  if (!user) return res.status(404).json({ message: 'User not found' });
+  if (user.isBanned) return res.status(403).json({ message: user.banReason || 'This account is banned' });
+
+  const role = (user.role || '').toLowerCase();
+  const isOwnerOrAdmin = user.isOwner || role === 'owner' || role === 'admin';
+  if (!isOwnerOrAdmin) {
+    logAuthAttempt({ discordId: user.discordId, discordName: user.discordName, role: user.role, ip: clientIP, success: false, reason: 'emergency_not_owner_or_admin' });
+    return res.status(403).json({ message: 'Emergency login is allowed only for owner/admin accounts' });
+  }
+
+  const token = jwt.sign(
+    {
+      id: user.discordId,
+      username: user.discordName,
+      avatar: user.discordAvatar,
+      isAdmin: true,
+      role: user.isOwner ? 'owner' : role || 'admin',
+      isOwner: !!user.isOwner || role === 'owner',
+    },
+    process.env.JWT_SECRET,
+    { expiresIn: '7d' }
+  );
+
+  logAuthAttempt({ discordId: user.discordId, discordName: user.discordName, role: user.role, ip: clientIP, success: true, reason: 'emergency_login' });
+  eventBus.emit('admin:login-attempt', {
+    discordId: user.discordId,
+    discordName: user.discordName,
+    role: user.role,
+    ip: clientIP,
+    success: true,
+    reason: 'emergency_login',
+  }, { source: 'auth' });
+
+  if (req.method === 'GET') {
+    return res.redirect(`${FRONTEND_URL}?token=${token}`);
+  }
+  return res.json({ token, message: 'Emergency login token created' });
+}
+
+router.get('/emergency-login', async (req, res) => {
+  try {
+    return await issueEmergencyLogin(req, res);
+  } catch (error) {
+    console.error('Emergency login error:', error.message);
+    return res.status(500).json({ message: 'Emergency login failed' });
+  }
+});
+
+router.post('/emergency-login', async (req, res) => {
+  try {
+    return await issueEmergencyLogin(req, res);
+  } catch (error) {
+    console.error('Emergency login error:', error.message);
+    return res.status(500).json({ message: 'Emergency login failed' });
+  }
+});
+
 router.get('/callback', async (req, res) => {
   const { code } = req.query;
   const clientIP = getClientIP(req);
