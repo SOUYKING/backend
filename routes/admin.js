@@ -2,6 +2,7 @@ const express = require('express');
 const User = require('../models/User');
 const Tournament = require('../models/Tournament');
 const Match = require('../models/Match');
+const Team = require('../models/Team');
 const authenticate = require('../middlewares/authenticate');
 const adminAuth = require('../middlewares/adminAuth');
 const Announcement = require('../models/Announcement');
@@ -11,6 +12,39 @@ const { getRank, calculatePointsChange, getRankProgress } = require('../utils/ra
 const GameEngine = require('../core/GameEngine');
 const eventBus = require('../utils/eventBus');
 const router = express.Router();
+
+async function enrichAdminMatches(matches) {
+  const docs = matches.map((m) => (m.toObject ? m.toObject() : { ...m }));
+  const tids = [...new Set(docs.map((d) => String(d.tournamentId)).filter(Boolean))];
+  const tournaments = tids.length
+    ? await Tournament.find({ _id: { $in: tids } }).select('title type').lean()
+    : [];
+  const tourById = Object.fromEntries(tournaments.map((t) => [String(t._id), t]));
+  const teamIdSet = new Set();
+  for (const d of docs) {
+    if (d.winnerTeamId) teamIdSet.add(String(d.winnerTeamId));
+    if (d.loserTeamId) teamIdSet.add(String(d.loserTeamId));
+  }
+  const teamIds = [...teamIdSet];
+  const teams = teamIds.length
+    ? await Team.find({ _id: { $in: teamIds } }).select('name').lean()
+    : [];
+  const teamById = Object.fromEntries(teams.map((t) => [String(t._id), t.name]));
+  return docs.map((d) => {
+    const tid = String(d.tournamentId);
+    const tour = tourById[tid] || {};
+    const wt = d.winnerTeamId ? teamById[String(d.winnerTeamId)] : null;
+    const lt = d.loserTeamId ? teamById[String(d.loserTeamId)] : null;
+    return {
+      ...d,
+      tournamentTitle: tour.title || null,
+      tournamentType: tour.type || '1v1',
+      teamMatch: !!(d.winnerTeamId || d.loserTeamId),
+      winnerTeamName: wt || null,
+      loserTeamName: lt || null,
+    };
+  });
+}
 
 async function logAction(req, action, targetId = null, targetName = null, details = {}) {
   try {
@@ -767,8 +801,10 @@ router.get('/matches', async (req, res) => {
       Match.countDocuments(query),
     ]);
 
+    const enriched = await enrichAdminMatches(matches);
+
     res.json({
-      matches,
+      matches: enriched,
       pagination: { page: parseInt(page), limit: parseInt(limit), total, pages: Math.ceil(total / limit) },
     });
   } catch (error) {
@@ -784,7 +820,8 @@ router.get('/matches/:matchId', async (req, res) => {
     if (!match) {
       return res.status(404).json({ message: 'Match not found' });
     }
-    res.json(match);
+    const [enriched] = await enrichAdminMatches([match]);
+    res.json(enriched);
   } catch (error) {
     console.error('Get match error:', error);
     res.status(500).json({ message: 'Failed to fetch match' });
