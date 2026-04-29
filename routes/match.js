@@ -1,6 +1,7 @@
 const express = require('express');
 const Match = require('../models/Match');
 const User = require('../models/User');
+const Team = require('../models/Team');
 const Tournament = require('../models/Tournament');
 const authenticate = require('../middlewares/authenticate');
 const GameEngine = require('../core/GameEngine');
@@ -80,10 +81,73 @@ router.get('/history', authenticate, async (req, res) => {
     if (!user) return res.status(404).json({ message: 'User not found' });
 
     const matches = await Match.find({
-      $or: [{ player1: user._id }, { player2: user._id }]
-    }).populate('player1 player2').sort({ date: -1 });
+      $or: [{ player1: user._id }, { player2: user._id }],
+    })
+      .populate('player1 player2')
+      .sort({ date: -1 });
 
-    const formatted = matches.map(match => {
+    const tournamentIds = [...new Set(matches.map((m) => String(m.tournamentId)))];
+    const tournaments = await Tournament.find({ _id: { $in: tournamentIds } }).select('title type');
+    const tournamentById = Object.fromEntries(
+      tournaments.map((t) => [String(t._id), { title: t.title, type: t.type }]),
+    );
+
+    const teamIdSet = new Set();
+    for (const m of matches) {
+      if (m.winnerTeamId) teamIdSet.add(String(m.winnerTeamId));
+      if (m.loserTeamId) teamIdSet.add(String(m.loserTeamId));
+    }
+    const teamIds = [...teamIdSet];
+    const teams = teamIds.length
+      ? await Team.find({ _id: { $in: teamIds } }).select('name')
+      : [];
+    const teamNameById = Object.fromEntries(teams.map((t) => [String(t._id), t.name]));
+
+    const captainLookupOr = [];
+    const captainLookupKey = new Set();
+    const addCaptainLookup = (captainDiscordId, tournamentId) => {
+      if (!captainDiscordId || !tournamentId) return;
+      const k = `${captainDiscordId}|${tournamentId}`;
+      if (captainLookupKey.has(k)) return;
+      captainLookupKey.add(k);
+      captainLookupOr.push({
+        captainDiscordId,
+        'tournamentLocks.tournamentId': tournamentId,
+      });
+    };
+
+    for (const m of matches) {
+      const isP1 = String(m.player1?._id) === String(user._id);
+      let r;
+      if (m.disputed || m.status === 'disputed') r = 'Disputed';
+      else if (m.result === 'draw') r = 'Draw';
+      else if (m.result === 'player1') r = isP1 ? 'Win' : 'Loss';
+      else if (m.result === 'player2') r = !isP1 ? 'Win' : 'Loss';
+      else if (m.status === 'pending') r = 'Pending';
+      else r = 'Unknown';
+      const tm = !!(m.winnerTeamId || m.loserTeamId);
+      const hasBothTeamIds = !!(m.winnerTeamId && m.loserTeamId);
+      const clearWinLoss = r === 'Win' || r === 'Loss';
+      if (!tm || (clearWinLoss && hasBothTeamIds)) continue;
+      const tournId = String(m.tournamentId);
+      addCaptainLookup(m.player1?.discordId, tournId);
+      addCaptainLookup(m.player2?.discordId, tournId);
+    }
+
+    let captainTeamNameByCapTournament = {};
+    if (captainLookupOr.length) {
+      const capTeams = await Team.find({ $or: captainLookupOr }).select(
+        'name captainDiscordId tournamentLocks',
+      );
+      for (const t of capTeams) {
+        for (const lock of t.tournamentLocks || []) {
+          captainTeamNameByCapTournament[`${t.captainDiscordId}|${String(lock.tournamentId)}`] =
+            t.name;
+        }
+      }
+    }
+
+    const formatted = matches.map((match) => {
       const isPlayer1 = String(match.player1?._id) === String(user._id);
       const opp = isPlayer1 ? match.player2 : match.player1;
 
@@ -95,6 +159,35 @@ router.get('/history', authenticate, async (req, res) => {
       else if (match.status === 'pending') result = 'Pending';
       else result = 'Unknown';
 
+      const tid = String(match.tournamentId);
+      const tour = tournamentById[tid] || {};
+      const tournamentType = tour.type || '1v1';
+      const teamMatch = !!(match.winnerTeamId || match.loserTeamId);
+
+      let yourTeamName = null;
+      let opponentTeamName = null;
+      if (teamMatch) {
+        const youWon =
+          (match.result === 'player1' && isPlayer1) ||
+          (match.result === 'player2' && !isPlayer1);
+        const hasBothTeamIds = !!(match.winnerTeamId && match.loserTeamId);
+        const clearWinLoss = result === 'Win' || result === 'Loss';
+        if (clearWinLoss && hasBothTeamIds) {
+          const yourTid = youWon ? match.winnerTeamId : match.loserTeamId;
+          const oppTid = youWon ? match.loserTeamId : match.winnerTeamId;
+          yourTeamName = teamNameById[String(yourTid)] || null;
+          opponentTeamName = teamNameById[String(oppTid)] || null;
+        }
+        if (!yourTeamName || !opponentTeamName) {
+          const c1 = match.player1?.discordId;
+          const c2 = match.player2?.discordId;
+          const p1Name = c1 ? captainTeamNameByCapTournament[`${c1}|${tid}`] : null;
+          const p2Name = c2 ? captainTeamNameByCapTournament[`${c2}|${tid}`] : null;
+          if (!yourTeamName) yourTeamName = (isPlayer1 ? p1Name : p2Name) || null;
+          if (!opponentTeamName) opponentTeamName = (isPlayer1 ? p2Name : p1Name) || null;
+        }
+      }
+
       return {
         id: match._id,
         opponent: opp?.discordName || 'Unknown Player',
@@ -105,6 +198,13 @@ router.get('/history', authenticate, async (req, res) => {
         result,
         date: match.date,
         tournamentId: match.tournamentId,
+        tournamentTitle: tour.title || null,
+        tournamentType,
+        teamMatch,
+        yourTeamName,
+        opponentTeamName,
+        winnerTeamId: match.winnerTeamId || null,
+        loserTeamId: match.loserTeamId || null,
         status: match.status || 'completed',
         disputed: !!match.disputed,
       };
@@ -433,13 +533,96 @@ router.get('/:matchId/details', authenticate, async (req, res) => {
     else if (match.status === 'pending') result = 'Pending';
     else result = 'Unknown';
 
+    const tid = match.tournamentId ? String(match.tournamentId) : '';
+    const teamMatch = !!(match.winnerTeamId || match.loserTeamId);
+    const teamIdList = [match.winnerTeamId, match.loserTeamId].filter(Boolean);
+    const [tournament, teamDocs] = await Promise.all([
+      tid ? Tournament.findById(tid).select('title type').lean() : Promise.resolve(null),
+      teamIdList.length
+        ? Team.find({ _id: { $in: teamIdList } }).select('name').lean()
+        : Promise.resolve([]),
+    ]);
+    const teamNameById = Object.fromEntries(teamDocs.map((t) => [String(t._id), t.name]));
+    const winnerTeamName = match.winnerTeamId ? teamNameById[String(match.winnerTeamId)] : null;
+    const loserTeamName = match.loserTeamId ? teamNameById[String(match.loserTeamId)] : null;
+
+    const c1 = match.player1?.discordId;
+    const c2 = match.player2?.discordId;
+    const capOr = [];
+    if (teamMatch && tid) {
+      if (c1) capOr.push({ captainDiscordId: c1, 'tournamentLocks.tournamentId': tid });
+      if (c2) capOr.push({ captainDiscordId: c2, 'tournamentLocks.tournamentId': tid });
+    }
+    let capTidToName = {};
+    if (capOr.length) {
+      const capTeams = await Team.find({ $or: capOr })
+        .select('name captainDiscordId tournamentLocks')
+        .lean();
+      for (const t of capTeams) {
+        for (const lock of t.tournamentLocks || []) {
+          capTidToName[`${t.captainDiscordId}|${String(lock.tournamentId)}`] = t.name;
+        }
+      }
+    }
+    const player1TeamName = c1 && tid ? capTidToName[`${c1}|${tid}`] || null : null;
+    const player2TeamName = c2 && tid ? capTidToName[`${c2}|${tid}`] || null : null;
+
+    let yourTeamName = null;
+    let opponentTeamName = null;
+    if (teamMatch && isParticipant) {
+      const youWon =
+        (match.result === 'player1' && isPlayer1) || (match.result === 'player2' && !isPlayer1);
+      const hasBothTeamIds = !!(match.winnerTeamId && match.loserTeamId);
+      const clearWinLoss = result === 'Win' || result === 'Loss';
+      if (clearWinLoss && hasBothTeamIds) {
+        yourTeamName = youWon ? winnerTeamName : loserTeamName;
+        opponentTeamName = youWon ? loserTeamName : winnerTeamName;
+      }
+      if (!yourTeamName || !opponentTeamName) {
+        if (!yourTeamName) yourTeamName = (isPlayer1 ? player1TeamName : player2TeamName) || null;
+        if (!opponentTeamName) {
+          opponentTeamName = (isPlayer1 ? player2TeamName : player1TeamName) || null;
+        }
+      }
+    }
+
     res.json({
-      id: match._id, date: match.date, result, disputed: !!match.disputed, status: match.status,
+      id: match._id,
+      date: match.date,
+      result,
+      disputed: !!match.disputed,
+      status: match.status,
       tournamentId: match.tournamentId,
-      self: { discordId: selfUser?.discordId, discordName: selfUser?.discordName, discordAvatar: selfUser?.discordAvatar },
-      opponent: { discordId: oppUser?.discordId, discordName: oppUser?.discordName, discordAvatar: oppUser?.discordAvatar },
-      winnerDiscordId: match.winnerDiscordId, loserDiscordId: match.loserDiscordId,
-      reports: match.reports || {}, evidence: match.evidence || [], chatLogs: match.chatLogs || [],
+      tournamentTitle: tournament?.title || null,
+      tournamentType: tournament?.type || '1v1',
+      teamMatch,
+      winnerTeamId: match.winnerTeamId || null,
+      loserTeamId: match.loserTeamId || null,
+      winnerTeamName,
+      loserTeamName,
+      player1TeamName,
+      player2TeamName,
+      yourTeamName,
+      opponentTeamName,
+      winnerRank: match.winnerRank || null,
+      loserRank: match.loserRank || null,
+      self: {
+        discordId: selfUser?.discordId,
+        discordName: selfUser?.discordName,
+        discordAvatar: selfUser?.discordAvatar,
+      },
+      opponent: {
+        discordId: oppUser?.discordId,
+        discordName: oppUser?.discordName,
+        discordAvatar: oppUser?.discordAvatar,
+      },
+      winnerDiscordId: match.winnerDiscordId,
+      loserDiscordId: match.loserDiscordId,
+      reports: match.reports || {},
+      evidence: match.evidence || [],
+      chatLogs: match.chatLogs || [],
+      isSpectator,
+      isParticipant,
     });
   } catch (error) {
     console.error('Error fetching match details:', error);
