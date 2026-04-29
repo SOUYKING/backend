@@ -9,6 +9,11 @@ const authenticate = require('../middlewares/authenticate');
 const eventBus = require('../utils/eventBus');
 const router = express.Router();
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
+const OAUTH_WINDOW_MS = 5 * 60 * 1000;
+const OAUTH_MAX_ATTEMPTS_PER_WINDOW = 8;
+const OAUTH_CODE_TTL_MS = 10 * 60 * 1000;
+const oauthAttemptsByIp = new Map();
+const usedOAuthCodes = new Map();
 
 function logAuthAttempt({ discordId, discordName, role, ip, success, reason, whitelisted, banned, altDetected, ...extra }) {
   const entry = {
@@ -51,6 +56,31 @@ function getClientIP(req) {
     || req.connection?.remoteAddress
     || req.socket?.remoteAddress
     || 'unknown';
+}
+
+function pruneAuthMaps() {
+  const now = Date.now();
+  for (const [ip, data] of oauthAttemptsByIp.entries()) {
+    if (!data || now > data.windowEndsAt) oauthAttemptsByIp.delete(ip);
+  }
+  for (const [code, expiresAt] of usedOAuthCodes.entries()) {
+    if (!expiresAt || now > expiresAt) usedOAuthCodes.delete(code);
+  }
+}
+
+function registerOauthAttempt(ip) {
+  const now = Date.now();
+  const current = oauthAttemptsByIp.get(ip);
+  if (!current || now > current.windowEndsAt) {
+    oauthAttemptsByIp.set(ip, { count: 1, windowEndsAt: now + OAUTH_WINDOW_MS });
+    return { blocked: false, retryAfter: 0 };
+  }
+  current.count += 1;
+  oauthAttemptsByIp.set(ip, current);
+  if (current.count > OAUTH_MAX_ATTEMPTS_PER_WINDOW) {
+    return { blocked: true, retryAfter: Math.max(1, Math.ceil((current.windowEndsAt - now) / 1000)) };
+  }
+  return { blocked: false, retryAfter: 0 };
 }
 
 async function issueEmergencyLogin(req, res) {
@@ -146,10 +176,22 @@ router.post('/emergency-login', async (req, res) => {
 router.get('/callback', async (req, res) => {
   const { code } = req.query;
   const clientIP = getClientIP(req);
+  pruneAuthMaps();
 
   if (!code) {
     logAuthAttempt({ ip: clientIP, success: false, reason: 'missing_oauth_code' });
     return res.redirect(`${FRONTEND_URL}?error=no_code`);
+  }
+
+  const throttle = registerOauthAttempt(clientIP);
+  if (throttle.blocked) {
+    logAuthAttempt({ ip: clientIP, success: false, reason: 'oauth_ip_rate_limited', retryAfter: throttle.retryAfter });
+    return res.redirect(`${FRONTEND_URL}?error=rate_limited&retryAfter=${throttle.retryAfter}`);
+  }
+
+  if (usedOAuthCodes.has(code)) {
+    logAuthAttempt({ ip: clientIP, success: false, reason: 'oauth_code_reused' });
+    return res.redirect(`${FRONTEND_URL}?error=oauth_failed`);
   }
 
   try {
@@ -176,6 +218,7 @@ router.get('/callback', async (req, res) => {
     );
 
     const { access_token } = tokenResponse.data;
+    usedOAuthCodes.set(code, Date.now() + OAUTH_CODE_TTL_MS);
 
     const userResponse = await axios.get('https://discord.com/api/users/@me', {
       headers: { Authorization: `Bearer ${access_token}` },
@@ -376,6 +419,14 @@ router.get('/callback', async (req, res) => {
     const discordErr = error.response?.data || {};
     const statusCode = error.response?.status || '';
     console.error('Error during OAuth callback:', statusCode, JSON.stringify(discordErr).substring(0, 300) || error.message);
+    if (statusCode === 429) {
+      const retryAfterHeader = Number(error.response?.headers?.['retry-after'] || 0);
+      const retryAfterBody = Number(discordErr?.retry_after || 0);
+      const retryAfter = Math.max(30, Math.ceil(retryAfterHeader || retryAfterBody || 120));
+      logAuthAttempt({ ip: clientIP, success: false, reason: 'rate_limited', retryAfter });
+      eventBus.emit('admin:login-attempt', { ip: clientIP, success: false, reason: 'rate_limited', retryAfter }, { source: 'auth' });
+      return res.redirect(`${FRONTEND_URL}?error=rate_limited&retryAfter=${retryAfter}`);
+    }
     logAuthAttempt({ ip: clientIP, success: false, reason: discordErr.error || 'oauth_failed' });
     eventBus.emit('admin:login-attempt', { ip: clientIP, success: false, reason: discordErr.error || 'oauth_failed' }, { source: 'auth' });
     return res.redirect(`${FRONTEND_URL}?error=oauth_failed`);
