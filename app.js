@@ -25,7 +25,7 @@ const { setupAdminSocket } = require('./utils/adminSocket');
 const GameEngine = require('./core/GameEngine');
 const { getRank } = require('./utils/rankSystem');
 const { containsProfanity, filterProfanity } = require('./utils/wordFilter');
-const { isBracketType, ensureBracket, getPendingMatchForUser } = require('./utils/bracketSystem');
+const { isBracketType, ensureBracket, getQueueStateForUser } = require('./utils/bracketSystem');
 
 process.on('unhandledRejection', (reason) => {
   console.error('Unhandled Rejection:', reason?.message || reason);
@@ -235,6 +235,10 @@ io.on('connection', (socket) => {
       const requiredTeamSize = tournament.type === '2v2' ? 2 : tournament.type === '3v3' ? 3 : tournament.type === '4v4' ? 4 : 1;
       let player;
       if (requiredTeamSize === 1) {
+        const alreadyRegistered = tournament.participants?.some((p) => p.userId === socket.userId);
+        if (isBracket && !alreadyRegistered) {
+          return socket.emit('error', { message: 'Bracket registration is required before queueing.' });
+        }
         const isRegistered = tournament.participants?.some((p) => p.userId === socket.userId);
         if (!isRegistered) {
           tournament.participants = tournament.participants || [];
@@ -279,10 +283,17 @@ io.on('connection', (socket) => {
 
         if (isBracket) {
           ensureBracket(tournament);
-          const myMatch = getPendingMatchForUser(tournament, socket.userId);
-          if (!myMatch) {
-            return socket.emit('error', { message: 'You are eliminated or waiting for next round.' });
+          const qState = getQueueStateForUser(tournament, socket.userId);
+          if (!qState || qState.state === 'not_in_bracket') {
+            return socket.emit('error', { message: 'You are not registered in this bracket.' });
           }
+          if (qState.state === 'eliminated') {
+            return socket.emit('error', { message: 'You are eliminated from this bracket.' });
+          }
+          if (qState.state === 'waiting_next_round') {
+            return socket.emit('error', { message: 'You qualified. Wait for your next-round opponent.' });
+          }
+          const myMatch = qState.match;
           const opponentId = String(myMatch.player1Id) === String(socket.userId)
             ? myMatch.player2Id
             : myMatch.player1Id;

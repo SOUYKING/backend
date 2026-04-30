@@ -161,6 +161,11 @@ function ensureBracket(tournament) {
 }
 
 function getPendingMatchForUser(tournament, userId) {
+  const state = getQueueStateForUser(tournament, userId);
+  return state.state === 'ready' ? state.match : null;
+}
+
+function getQueueStateForUser(tournament, userId) {
   if (!tournament?.bracket?.rounds?.length) return null;
   const uid = String(userId);
   let involvedAny = false;
@@ -171,16 +176,23 @@ function getPendingMatchForUser(tournament, userId) {
       involvedAny = true;
       if (match.winnerId) {
         // If this match is completed and user lost, they are eliminated.
-        if (String(match.winnerId) !== uid) return null;
+        if (String(match.winnerId) !== uid) {
+          return { state: 'eliminated', match };
+        }
         // User already won this match; keep scanning for next round assignment.
         continue;
       }
-      if (!match.player1Id || !match.player2Id) return null;
-      if (match.status === 'pending' || match.status === 'in_progress') return match;
-      return null;
+      if (!match.player1Id || !match.player2Id) {
+        return { state: 'waiting_next_round', match };
+      }
+      if (match.status === 'pending' || match.status === 'in_progress') {
+        return { state: 'ready', match };
+      }
+      return { state: 'waiting_next_round', match };
     }
   }
-  return involvedAny ? null : null;
+  if (!involvedAny) return { state: 'not_in_bracket', match: null };
+  return { state: 'waiting_next_round', match: null };
 }
 
 function applyMatchResult(tournament, winnerId, loserId, activeMatchId = null) {
@@ -219,5 +231,6 @@ module.exports = {
   isBracketType,
   ensureBracket,
   getPendingMatchForUser,
+  getQueueStateForUser,
   applyMatchResult,
 };

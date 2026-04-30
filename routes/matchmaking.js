@@ -4,7 +4,7 @@ const Tournament = require('../models/Tournament');
 const Team = require('../models/Team');
 const authenticate = require('../middlewares/authenticate');
 const GameEngine = require('../core/GameEngine');
-const { isBracketType, ensureBracket, getPendingMatchForUser } = require('../utils/bracketSystem');
+const { isBracketType, ensureBracket, getQueueStateForUser } = require('../utils/bracketSystem');
 const router = express.Router();
 
 router.post('/join', authenticate, async (req, res) => {
@@ -39,6 +39,11 @@ router.post('/join', authenticate, async (req, res) => {
     const requiredTeamSize = tournament.type === '2v2' ? 2 : tournament.type === '3v3' ? 3 : tournament.type === '4v4' ? 4 : 1;
     let player;
     if (requiredTeamSize === 1) {
+      const alreadyRegistered = tournament.participants.some(p => p.userId === req.user.id);
+      if (isBracket && !alreadyRegistered) {
+        return res.status(400).json({ message: 'Bracket registration is required before queueing.' });
+      }
+
       let isRegistered = tournament.participants.some(p => p.userId === req.user.id);
       if (!isRegistered) {
         tournament.participants.push({
@@ -71,10 +76,17 @@ router.post('/join', authenticate, async (req, res) => {
 
       if (isBracket) {
         ensureBracket(tournament);
-        const myMatch = getPendingMatchForUser(tournament, req.user.id);
-        if (!myMatch) {
-          return res.status(400).json({ message: 'You are eliminated or waiting for next round.' });
+        const qState = getQueueStateForUser(tournament, req.user.id);
+        if (!qState || qState.state === 'not_in_bracket') {
+          return res.status(400).json({ message: 'You are not registered in this bracket.' });
         }
+        if (qState.state === 'eliminated') {
+          return res.status(400).json({ message: 'You are eliminated from this bracket.' });
+        }
+        if (qState.state === 'waiting_next_round') {
+          return res.status(400).json({ message: 'You qualified. Wait for your next-round opponent.' });
+        }
+        const myMatch = qState.match;
         const opponentId = String(myMatch.player1Id) === String(req.user.id)
           ? myMatch.player2Id
           : myMatch.player1Id;

@@ -355,6 +355,9 @@ router.post('/:id/join', authenticate, async (req, res) => {
     }
 
     const alreadyRegistered = tournament.participants.some(p => p.userId === req.user.id);
+    if (isBracketType(tournament.type) && !alreadyRegistered && now >= startDate) {
+      return res.status(400).json({ message: 'Bracket registration closed when tournament started.' });
+    }
     if (!alreadyRegistered) {
       tournament.participants.push({
         userId: req.user.id,
@@ -373,7 +376,8 @@ router.post('/:id/join', authenticate, async (req, res) => {
         points: 0,
       });
       if (isBracketType(tournament.type)) {
-        ensureBracket(tournament);
+        // Rebuild bracket from the latest registration list on next access/queue join.
+        tournament.bracket = null;
       }
       await tournament.save();
     } else if (tournament.isModified('status')) {
@@ -411,6 +415,9 @@ router.post('/:id/leave', authenticate, async (req, res) => {
 
     tournament.participants = tournament.participants.filter((p) => p.userId !== req.user.id);
     tournament.leaderboard = tournament.leaderboard.filter((l) => l.userId !== req.user.id);
+    if (isBracketType(tournament.type)) {
+      tournament.bracket = null;
+    }
     await tournament.save();
 
     res.json({ message: 'You left the tournament registration successfully.' });
