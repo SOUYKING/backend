@@ -101,6 +101,10 @@ const LOBBY_CHAT_ROOM = 'lobby:global';
 const LOBBY_CHAT_MAX = 120;
 const lobbyChatLogs = [];
 
+function canModerateLobby(role = '') {
+  return role === 'admin' || role === 'owner';
+}
+
 // Track which match rooms each socket has joined and their role in each room
 // socketId -> Map(matchId -> { role: 'player'|'staff'|'viewer', joinedAt: timestamp })
 const socketMatchRooms = new Map();
@@ -226,6 +230,8 @@ io.on('connection', (socket) => {
     const hasProfanity = containsProfanity(message);
     const finalMessage = hasProfanity ? filterProfanity(message) : message;
     const msg = {
+      id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      senderId: socket.userId,
       sender: senderName,
       message: String(finalMessage).slice(0, 300),
       time: new Date().toISOString(),
@@ -242,6 +248,27 @@ io.on('connection', (socket) => {
     if (hasProfanity) {
       socket.emit('chatWarning', { message: 'Your message contained inappropriate language and was filtered.' });
     }
+  });
+
+  socket.on('deleteLobbyMessage', async ({ messageId }) => {
+    if (!socket.userId || !messageId) return;
+    let role = 'player';
+    try {
+      const User = require('./models/User');
+      const user = await User.findOne({ discordId: socket.userId }).select('role');
+      role = user?.role || 'player';
+    } catch {}
+
+    if (!canModerateLobby(role)) {
+      return socket.emit('chatError', { message: 'Only admin/owner can delete lobby messages.' });
+    }
+
+    const idx = lobbyChatLogs.findIndex((m) => String(m.id) === String(messageId));
+    if (idx === -1) {
+      return socket.emit('chatError', { message: 'Message not found or already removed.' });
+    }
+    lobbyChatLogs.splice(idx, 1);
+    io.to(LOBBY_CHAT_ROOM).emit('lobbyMessageDeleted', { messageId });
   });
 
   socket.on('joinQueue', async ({ tournamentId, epicName, teamId }) => {
