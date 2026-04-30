@@ -97,6 +97,9 @@ app.use('/staff-notifications', staffNotificationRoutes);
 const chatRateLimits = new Map();
 const MESSAGE_COOLDOWN_MS = 1500;
 const MAX_MESSAGES_PER_MINUTE = 20;
+const LOBBY_CHAT_ROOM = 'lobby:global';
+const LOBBY_CHAT_MAX = 120;
+const lobbyChatLogs = [];
 
 // Track which match rooms each socket has joined and their role in each room
 // socketId -> Map(matchId -> { role: 'player'|'staff'|'viewer', joinedAt: timestamp })
@@ -180,6 +183,64 @@ io.on('connection', (socket) => {
     if (queueIndex !== -1) {
       GameEngine.queue[queueIndex].socketId = socket.id;
       await GameEngine.processMatchmaking();
+    }
+  });
+
+  socket.on('joinLobbyChat', async () => {
+    if (!socket.userId) {
+      return socket.emit('chatError', { message: 'Please refresh and log in again.' });
+    }
+    socket.join(LOBBY_CHAT_ROOM);
+    socket.emit('lobbyChatHistory', {
+      chatLogs: lobbyChatLogs.slice(-60),
+    });
+    const online = io.sockets.adapter.rooms.get(LOBBY_CHAT_ROOM)?.size || 0;
+    io.to(LOBBY_CHAT_ROOM).emit('lobbyPresence', { online });
+  });
+
+  socket.on('sendLobbyMessage', async ({ message, sender }) => {
+    if (!socket.userId || !message || !String(message).trim()) return;
+    if (!socket.rooms.has(LOBBY_CHAT_ROOM)) {
+      return socket.emit('chatError', { message: 'Join lobby chat first.' });
+    }
+
+    const spamCheck = checkChatSpam(socket.userId || sender);
+    if (!spamCheck.allowed) {
+      return socket.emit('chatError', { message: spamCheck.reason });
+    }
+
+    let senderName = sender || 'Player';
+    let senderRole = 'player';
+    try {
+      const User = require('./models/User');
+      const user = await User.findOne({ discordId: socket.userId }).select('discordName role mutedUntil');
+      if (user) {
+        senderName = user.discordName || senderName;
+        senderRole = user.role || 'player';
+        if (user.mutedUntil && new Date(user.mutedUntil) > new Date()) {
+          return socket.emit('chatError', { message: 'You are muted and cannot send messages.' });
+        }
+      }
+    } catch {}
+
+    const hasProfanity = containsProfanity(message);
+    const finalMessage = hasProfanity ? filterProfanity(message) : message;
+    const msg = {
+      sender: senderName,
+      message: String(finalMessage).slice(0, 300),
+      time: new Date().toISOString(),
+      role: senderRole,
+      isSystem: false,
+    };
+
+    lobbyChatLogs.push(msg);
+    if (lobbyChatLogs.length > LOBBY_CHAT_MAX) {
+      lobbyChatLogs.splice(0, lobbyChatLogs.length - LOBBY_CHAT_MAX);
+    }
+
+    io.to(LOBBY_CHAT_ROOM).emit('receiveLobbyMessage', msg);
+    if (hasProfanity) {
+      socket.emit('chatWarning', { message: 'Your message contained inappropriate language and was filtered.' });
     }
   });
 
@@ -721,6 +782,10 @@ socket.on('staffJoinMatch', async ({ matchId, staffName }) => {
     console.log(`🔴 Disconnected: ${socket.id}`);
     if (socket.userId) {
       GameEngine.leaveQueue(socket.userId).catch((err) => console.warn('[disconnect] leaveQueue', err.message));
+    }
+    if (socket.rooms?.has?.(LOBBY_CHAT_ROOM)) {
+      const online = Math.max(0, (io.sockets.adapter.rooms.get(LOBBY_CHAT_ROOM)?.size || 1) - 1);
+      io.to(LOBBY_CHAT_ROOM).emit('lobbyPresence', { online });
     }
     cleanupSocketRooms(socket.id);
   });
