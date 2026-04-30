@@ -4,6 +4,32 @@ const Match = require('../models/Match');
 const authenticate = require('../middlewares/authenticate');
 const { getRank } = require('../utils/rankSystem');
 const router = express.Router();
+const MIN_RANKED_MATCHES = 5;
+
+function toWinRate(wins = 0, totalMatches = 0) {
+  if (!totalMatches) return 0;
+  return Number(((wins / totalMatches) * 100).toFixed(2));
+}
+
+function compareGlobalLeaderboard(a, b) {
+  // Ranked players first; provisional players (few matches) go below.
+  if (a.isProvisional !== b.isProvisional) {
+    return a.isProvisional ? 1 : -1;
+  }
+
+  if (!a.isProvisional) {
+    if ((b.points || 0) !== (a.points || 0)) return (b.points || 0) - (a.points || 0);
+    if ((b.winRate || 0) !== (a.winRate || 0)) return (b.winRate || 0) - (a.winRate || 0);
+    if ((b.wins || 0) !== (a.wins || 0)) return (b.wins || 0) - (a.wins || 0);
+    if ((b.totalMatches || 0) !== (a.totalMatches || 0)) return (b.totalMatches || 0) - (a.totalMatches || 0);
+  } else {
+    if ((b.totalMatches || 0) !== (a.totalMatches || 0)) return (b.totalMatches || 0) - (a.totalMatches || 0);
+    if ((b.points || 0) !== (a.points || 0)) return (b.points || 0) - (a.points || 0);
+    if ((b.wins || 0) !== (a.wins || 0)) return (b.wins || 0) - (a.wins || 0);
+  }
+
+  return String(a.discordName || '').localeCompare(String(b.discordName || ''));
+}
 
 // Get user account info
 router.get('/', authenticate, async (req, res) => {
@@ -123,23 +149,34 @@ router.get('/profile', authenticate, async (req, res) => {
 router.get('/leaderboard/global', async (req, res) => {
   try {
     const users = await User.find({ isBanned: { $ne: true } })
-      .sort({ rankingPoints: -1, wins: -1 })
-      .limit(100)
-      .select('discordId discordName discordAvatar wins losses rankingPoints role');
-    const enriched = users.map(u => ({
+      .select('discordId discordName discordAvatar wins losses totalMatches rankingPoints role');
+    const enriched = users.map(u => {
+      const wins = u.wins || 0;
+      const losses = u.losses || 0;
+      const totalMatches = u.totalMatches || (wins + losses);
+      const points = u.rankingPoints || 0;
+      const isProvisional = totalMatches < MIN_RANKED_MATCHES;
+      return {
       userId: u.discordId,
       discordId: u.discordId,
       discordName: u.discordName,
       discordAvatar: u.discordAvatar,
-      wins: u.wins,
-      losses: u.losses,
-      points: u.rankingPoints || 0,
+      wins,
+      losses,
+      totalMatches,
+      winRate: toWinRate(wins, totalMatches),
+      points,
+      isProvisional,
+      leaderboardTier: isProvisional ? 'provisional' : 'ranked',
       role: u.role,
-      rank: getRank(u.rankingPoints || 0).name,
-      rankIcon: getRank(u.rankingPoints || 0).icon,
-      rankColor: getRank(u.rankingPoints || 0).color,
-    }));
-    res.json(enriched);
+      rank: getRank(points).name,
+      rankIcon: getRank(points).icon,
+      rankColor: getRank(points).color,
+      minRankedMatches: MIN_RANKED_MATCHES,
+    };
+    });
+    enriched.sort(compareGlobalLeaderboard);
+    res.json(enriched.slice(0, 100));
   } catch (error) {
     console.error('Error fetching global leaderboard:', error.message);
     res.status(500).json({ message: 'Failed to fetch global leaderboard' });
