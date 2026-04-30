@@ -344,19 +344,20 @@ router.post('/:id/join', authenticate, async (req, res) => {
     const startDate = new Date(tournament.startDate);
     const endDate = new Date(tournament.endDate);
     const END_GRACE_MS = 6 * 60 * 60 * 1000;
+    const isBracket = isBracketType(tournament.type);
 
     if (tournament.status === 'cancelled') {
       return res.status(400).json({ message: 'Tournament is cancelled' });
     }
 
-    if (now < startDate) {
+    if (now < startDate && !isBracket) {
       return res.status(400).json({ message: `Tournament queue opens at ${startDate.toLocaleString()}`, queueOpensAt: startDate });
     }
     if (now.getTime() > endDate.getTime() + END_GRACE_MS) {
       return res.status(400).json({ message: 'Tournament has ended' });
     }
 
-    if (tournament.status !== 'active') {
+    if (now >= startDate && tournament.status !== 'active') {
       tournament.status = 'active';
     }
 
@@ -373,7 +374,7 @@ router.post('/:id/join', authenticate, async (req, res) => {
 
     const alreadyRegistered = tournament.participants.some(p => p.userId === req.user.id);
     const registrationCutoff = tournament.registrationDeadline ? new Date(tournament.registrationDeadline) : startDate;
-    if (isBracketType(tournament.type) && !alreadyRegistered && now >= registrationCutoff) {
+    if (isBracket && !alreadyRegistered && now >= registrationCutoff) {
       return res.status(400).json({ message: 'Bracket registration deadline has passed.' });
     }
     if (!alreadyRegistered) {
@@ -393,19 +394,22 @@ router.post('/:id/join', authenticate, async (req, res) => {
         losses: 0,
         points: 0,
       });
-      if (isBracketType(tournament.type)) {
+      if (isBracket) {
         // Rebuild bracket from the latest registration list on next access/queue join.
         tournament.bracket = null;
       }
       await tournament.save();
     } else if (tournament.isModified('status')) {
-      if (isBracketType(tournament.type)) {
+      if (isBracket) {
         ensureBracket(tournament);
       }
       await tournament.save();
     }
 
     console.log(`✅ ${req.user.username} joined tournament: ${tournament.title}`);
+    if (isBracket && now < startDate) {
+      return res.json({ message: `Registered for bracket. Queue opens at ${startDate.toLocaleString()}.`, tournament });
+    }
     res.json({ message: 'Joined tournament! Queue is open — go to the queue page to start matching.', tournament });
   } catch (error) {
     console.error('Error joining tournament:', error.message);
