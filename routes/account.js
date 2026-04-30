@@ -4,7 +4,7 @@ const Match = require('../models/Match');
 const authenticate = require('../middlewares/authenticate');
 const { getRank } = require('../utils/rankSystem');
 const router = express.Router();
-const MIN_RANKED_MATCHES = 5;
+const MIN_RANKED_MATCHES = 3;
 
 function toWinRate(wins = 0, totalMatches = 0) {
   if (!totalMatches) return 0;
