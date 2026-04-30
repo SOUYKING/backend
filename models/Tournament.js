@@ -31,7 +31,7 @@ const tournamentSchema = new mongoose.Schema({
   // Tournament settings
   type: {
     type: String,
-    enum: ['1v1', '2v2', '3v3', '4v4'],
+    enum: ['1v1', '1v1_bracket', '2v2', '3v3', '4v4'],
     default: '1v1',
   },
   startDate: {
@@ -108,6 +108,10 @@ const tournamentSchema = new mongoose.Schema({
     losses: Number,
     points: Number,
   }],
+  bracket: {
+    type: mongoose.Schema.Types.Mixed,
+    default: null,
+  },
   createdAt: {
     type: Date,
     default: Date.now,

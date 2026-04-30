@@ -5,6 +5,7 @@ const Tournament = require('../models/Tournament');
 const StaffNotification = require('../models/StaffNotification');
 const eventBus = require('../utils/eventBus');
 const { getRank, calculatePointsChange } = require('../utils/rankSystem');
+const { isBracketType, applyMatchResult } = require('../utils/bracketSystem');
 
 const MATCHMAKING_INTERVAL = 2000;
 const RESULT_TIMEOUT_MS = 10 * 60 * 1000;
@@ -111,6 +112,13 @@ class GameEngine {
         const playerB = this.queue[j];
 
         if (playerA.tournamentId !== playerB.tournamentId) continue;
+
+        if (playerA.tournamentMode === 'bracket' || playerB.tournamentMode === 'bracket') {
+          const sameBracketMatch = playerA.bracketMatchId && playerB.bracketMatchId && playerA.bracketMatchId === playerB.bracketMatchId;
+          const aWantsB = !playerA.bracketOpponentId || String(playerA.bracketOpponentId) === String(playerB.userId);
+          const bWantsA = !playerB.bracketOpponentId || String(playerB.bracketOpponentId) === String(playerA.userId);
+          if (!sameBracketMatch || !aWantsB || !bWantsA) continue;
+        }
 
         const diff = Math.abs((playerA.rankingPoints || 0) - (playerB.rankingPoints || 0));
         if (diff < bestDiff) {
@@ -429,6 +437,14 @@ class GameEngine {
           for (const id of loserMemberIds) {
             const ll = tournament.leaderboard.find(l => l.userId === id);
             if (ll) { ll.losses += 1; ll.points = Math.max(0, (ll.points || 0) - pointsChange.lossPoints); }
+          }
+          if (isBracketType(tournament.type)) {
+            applyMatchResult(
+              tournament,
+              winnerCaptain.discordId,
+              loserCaptain.discordId,
+              matchId,
+            );
           }
           await tournament.save();
         }

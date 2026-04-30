@@ -25,6 +25,7 @@ const { setupAdminSocket } = require('./utils/adminSocket');
 const GameEngine = require('./core/GameEngine');
 const { getRank } = require('./utils/rankSystem');
 const { containsProfanity, filterProfanity } = require('./utils/wordFilter');
+const { isBracketType, ensureBracket, getPendingMatchForUser } = require('./utils/bracketSystem');
 
 process.on('unhandledRejection', (reason) => {
   console.error('Unhandled Rejection:', reason?.message || reason);
@@ -230,6 +231,7 @@ io.on('connection', (socket) => {
         return socket.emit('error', { message: 'Epic Games account not verified' });
       }
 
+      const isBracket = isBracketType(tournament.type);
       const requiredTeamSize = tournament.type === '2v2' ? 2 : tournament.type === '3v3' ? 3 : tournament.type === '4v4' ? 4 : 1;
       let player;
       if (requiredTeamSize === 1) {
@@ -274,7 +276,24 @@ io.on('connection', (socket) => {
           role: user.role || 'player',
           mapCode: tournament.mapCode,
         };
+
+        if (isBracket) {
+          ensureBracket(tournament);
+          const myMatch = getPendingMatchForUser(tournament, socket.userId);
+          if (!myMatch) {
+            return socket.emit('error', { message: 'You are eliminated or waiting for next round.' });
+          }
+          const opponentId = String(myMatch.player1Id) === String(socket.userId)
+            ? myMatch.player2Id
+            : myMatch.player1Id;
+          player.tournamentMode = 'bracket';
+          player.bracketMatchId = myMatch.id;
+          player.bracketOpponentId = opponentId;
+        }
       } else {
+        if (isBracket) {
+          return socket.emit('error', { message: 'This bracket tournament is solo only.' });
+        }
         if (!teamId) return socket.emit('error', { message: `This is a ${tournament.type} tournament. Select a team first.` });
         const Team = require('./models/Team');
         const memberUsers = require('./models/User');

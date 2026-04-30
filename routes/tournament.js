@@ -3,6 +3,7 @@ const Tournament = require('../models/Tournament');
 const Team = require('../models/Team');
 const User = require('../models/User');
 const authenticate = require('../middlewares/authenticate');
+const { isBracketType, ensureBracket } = require('../utils/bracketSystem');
 const router = express.Router();
 
 async function pullTeamRosterLocksForTournament(tournamentId) {
@@ -115,6 +116,10 @@ router.get('/:id', async (req, res) => {
     if (!tournament) {
       return res.status(404).json({ message: 'Tournament not found' });
     }
+    ensureBracket(tournament);
+    if (tournament.isModified('bracket')) {
+      await tournament.save();
+    }
     res.json({ ...tournament.toObject(), ...getTournamentLifecycle(tournament) });
   } catch (error) {
     console.error('Error fetching tournament:', error.message);
@@ -161,6 +166,7 @@ router.post('/', authenticate, async (req, res) => {
       return res.status(400).json({ message: 'Start date must be before end date' });
     }
 
+    const normalizedType = type || '1v1';
     const tournament = new Tournament({
       title,
       description,
@@ -168,7 +174,7 @@ router.post('/', authenticate, async (req, res) => {
       mapCode,
       mapName: mapName || null,
       rules,
-      type: type || '1v1',
+      type: normalizedType,
       startDate: parsedStartDate,
       endDate: parsedEndDate,
       maxPlayers: maxPlayers || 16,
@@ -184,6 +190,10 @@ router.post('/', authenticate, async (req, res) => {
       matches: [],
       leaderboard: []
     });
+
+    if (isBracketType(normalizedType)) {
+      tournament.maxPlayers = Math.max(2, tournament.maxPlayers || 16);
+    }
 
     await tournament.save();
     console.log(`✅ Tournament created: ${title}`);
@@ -244,6 +254,9 @@ router.put('/:id', authenticate, async (req, res) => {
     if (prize !== undefined) tournament.prize = prize;
     if (status) tournament.status = status;
 
+    if (isBracketType(tournament.type)) {
+      tournament.maxPlayers = Math.max(2, Number(tournament.maxPlayers) || 16);
+    }
     await tournament.save();
     if (status && ['completed', 'cancelled'].includes(tournament.status)) {
       await pullTeamRosterLocksForTournament(tournament._id);
@@ -359,8 +372,14 @@ router.post('/:id/join', authenticate, async (req, res) => {
         losses: 0,
         points: 0,
       });
+      if (isBracketType(tournament.type)) {
+        ensureBracket(tournament);
+      }
       await tournament.save();
     } else if (tournament.isModified('status')) {
+      if (isBracketType(tournament.type)) {
+        ensureBracket(tournament);
+      }
       await tournament.save();
     }
 
@@ -445,6 +464,14 @@ router.get('/:id/leaderboard', async (req, res) => {
       : [];
     const nameByTeamId = Object.fromEntries(teamDocs.map((doc) => [String(doc._id), doc.name]));
 
+    if (isBracketType(t.type)) {
+      ensureBracket(tournament);
+      t.bracket = tournament.bracket;
+      if (tournament.isModified('bracket')) {
+        await tournament.save();
+      }
+    }
+
     const entries = rawEntries
       .map((e) => {
         if (!e.teamName && e.teamId && nameByTeamId[e.teamId]) {
@@ -467,6 +494,7 @@ router.get('/:id/leaderboard', async (req, res) => {
         startDate: t.startDate,
         endDate: t.endDate,
         status: t.status,
+        bracket: t.bracket || null,
       },
       entries,
     });

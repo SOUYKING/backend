@@ -4,6 +4,7 @@ const Tournament = require('../models/Tournament');
 const Team = require('../models/Team');
 const authenticate = require('../middlewares/authenticate');
 const GameEngine = require('../core/GameEngine');
+const { isBracketType, ensureBracket, getPendingMatchForUser } = require('../utils/bracketSystem');
 const router = express.Router();
 
 router.post('/join', authenticate, async (req, res) => {
@@ -34,6 +35,7 @@ router.post('/join', authenticate, async (req, res) => {
     if (user.isBanned) return res.status(403).json({ message: user.banReason || 'Your account is banned.' });
     if (!user.epicVerified) return res.status(403).json({ message: 'You must verify your Epic Games account to play' });
 
+    const isBracket = isBracketType(tournament.type);
     const requiredTeamSize = tournament.type === '2v2' ? 2 : tournament.type === '3v3' ? 3 : tournament.type === '4v4' ? 4 : 1;
     let player;
     if (requiredTeamSize === 1) {
@@ -66,7 +68,24 @@ router.post('/join', authenticate, async (req, res) => {
         tournamentId,
         socketId: null,
       };
+
+      if (isBracket) {
+        ensureBracket(tournament);
+        const myMatch = getPendingMatchForUser(tournament, req.user.id);
+        if (!myMatch) {
+          return res.status(400).json({ message: 'You are eliminated or waiting for next round.' });
+        }
+        const opponentId = String(myMatch.player1Id) === String(req.user.id)
+          ? myMatch.player2Id
+          : myMatch.player1Id;
+        player.tournamentMode = 'bracket';
+        player.bracketMatchId = myMatch.id;
+        player.bracketOpponentId = opponentId;
+      }
     } else {
+      if (isBracket) {
+        return res.status(400).json({ message: 'This bracket tournament is solo only.' });
+      }
       if (!teamId) return res.status(400).json({ message: `This is a ${tournament.type} tournament. Select a team first.` });
       const team = await Team.findById(teamId);
       if (!team || !team.isActive) return res.status(404).json({ message: 'Team not found' });
@@ -145,6 +164,10 @@ router.post('/join', authenticate, async (req, res) => {
         teamMemberIds: memberIds,
         captainId: team.captainDiscordId,
       };
+    }
+
+    if (tournament.isModified('bracket')) {
+      await tournament.save();
     }
 
     const result = await GameEngine.joinQueue(player);
