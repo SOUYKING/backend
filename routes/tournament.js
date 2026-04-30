@@ -148,6 +148,7 @@ router.post('/', authenticate, async (req, res) => {
     type,
     startDate,
     endDate,
+    registrationDeadline,
     maxPlayers,
     minSkillRating,
     maxSkillRating,
@@ -161,9 +162,16 @@ router.post('/', authenticate, async (req, res) => {
   try {
     const parsedStartDate = new Date(startDate);
     const parsedEndDate = new Date(endDate);
+    const parsedRegistrationDeadline = registrationDeadline ? new Date(registrationDeadline) : parsedStartDate;
 
     if (parsedStartDate >= parsedEndDate) {
       return res.status(400).json({ message: 'Start date must be before end date' });
+    }
+    if (Number.isNaN(parsedRegistrationDeadline.getTime())) {
+      return res.status(400).json({ message: 'Invalid registration deadline' });
+    }
+    if (parsedRegistrationDeadline > parsedStartDate) {
+      return res.status(400).json({ message: 'Registration deadline must be before or at start date' });
     }
 
     const normalizedType = type || '1v1';
@@ -177,6 +185,7 @@ router.post('/', authenticate, async (req, res) => {
       type: normalizedType,
       startDate: parsedStartDate,
       endDate: parsedEndDate,
+      registrationDeadline: parsedRegistrationDeadline,
       maxPlayers: maxPlayers || 16,
       minSkillRating: minSkillRating || 0,
       maxSkillRating: maxSkillRating || 3000,
@@ -228,6 +237,7 @@ router.put('/:id', authenticate, async (req, res) => {
       type,
       startDate,
       endDate,
+      registrationDeadline,
       maxPlayers,
       minSkillRating,
       maxSkillRating,
@@ -244,8 +254,15 @@ router.put('/:id', authenticate, async (req, res) => {
     if (type) tournament.type = type;
     if (startDate) tournament.startDate = new Date(startDate);
     if (endDate) tournament.endDate = new Date(endDate);
+    if (registrationDeadline) tournament.registrationDeadline = new Date(registrationDeadline);
     if (new Date(tournament.startDate) >= new Date(tournament.endDate)) {
       return res.status(400).json({ message: 'Start date must be before end date' });
+    }
+    if (!tournament.registrationDeadline || Number.isNaN(new Date(tournament.registrationDeadline).getTime())) {
+      tournament.registrationDeadline = new Date(tournament.startDate);
+    }
+    if (new Date(tournament.registrationDeadline) > new Date(tournament.startDate)) {
+      return res.status(400).json({ message: 'Registration deadline must be before or at start date' });
     }
 
     if (maxPlayers) tournament.maxPlayers = maxPlayers;
@@ -355,8 +372,9 @@ router.post('/:id/join', authenticate, async (req, res) => {
     }
 
     const alreadyRegistered = tournament.participants.some(p => p.userId === req.user.id);
-    if (isBracketType(tournament.type) && !alreadyRegistered && now >= startDate) {
-      return res.status(400).json({ message: 'Bracket registration closed when tournament started.' });
+    const registrationCutoff = tournament.registrationDeadline ? new Date(tournament.registrationDeadline) : startDate;
+    if (isBracketType(tournament.type) && !alreadyRegistered && now >= registrationCutoff) {
+      return res.status(400).json({ message: 'Bracket registration deadline has passed.' });
     }
     if (!alreadyRegistered) {
       tournament.participants.push({
@@ -500,6 +518,7 @@ router.get('/:id/leaderboard', async (req, res) => {
         description: t.description,
         startDate: t.startDate,
         endDate: t.endDate,
+        registrationDeadline: t.registrationDeadline || null,
         status: t.status,
         bracket: t.bracket || null,
       },
