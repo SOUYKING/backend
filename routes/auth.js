@@ -155,13 +155,10 @@ async function issueEmergencyLogin(req, res) {
   return res.json({ token, message: 'Emergency login token created' });
 }
 
-router.get('/emergency-login', async (req, res) => {
-  try {
-    return await issueEmergencyLogin(req, res);
-  } catch (error) {
-    console.error('Emergency login error:', error.message);
-    return res.status(500).json({ message: 'Emergency login failed' });
-  }
+router.get('/emergency-login', (req, res) => {
+  return res.status(405).json({
+    message: 'Use POST /auth/emergency-login with JSON body (secret, discordId or discordName). GET is disabled to avoid secrets in URLs and logs.',
+  });
 });
 
 router.post('/emergency-login', async (req, res) => {

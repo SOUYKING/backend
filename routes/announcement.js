@@ -1,9 +1,9 @@
 const express = require('express');
 const Announcement = require('../models/Announcement');
-const authenticate = require('../middlewares/authenticate');
 const router = express.Router();
 
-router.get('/', authenticate, async (req, res) => {
+/** Public read: active announcements only (same payload as before; no auth required). */
+router.get('/', async (req, res) => {
   try {
     const announcements = await Announcement.find({
       active: true,

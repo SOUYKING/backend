@@ -22,6 +22,8 @@ const socketManager = require('./utils/socketManager');
 const eventBus = require('./utils/eventBus');
 const { setupAdminSocket } = require('./utils/adminSocket');
 
+const jwt = require('jsonwebtoken');
+const User = require('./models/User');
 const GameEngine = require('./core/GameEngine');
 const { getRank } = require('./utils/rankSystem');
 const { containsProfanity, filterProfanity } = require('./utils/wordFilter');
@@ -71,6 +73,26 @@ const corsOptions = {
 };
 
 const io = socketIo(server, { cors: corsOptions });
+
+io.use(async (socket, next) => {
+  try {
+    const raw = socket.handshake.auth?.token ?? socket.handshake.query?.token;
+    const token = raw != null ? String(raw).trim() : '';
+    if (!token) {
+      socket.userId = null;
+      return next();
+    }
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const dbUser = await User.findOne({ discordId: decoded.id }).select('discordId isBanned');
+    if (!dbUser) return next(new Error('auth_failed'));
+    if (dbUser.isBanned) return next(new Error('banned'));
+    socket.userId = dbUser.discordId;
+    return next();
+  } catch (e) {
+    return next(new Error('auth_failed'));
+  }
+});
+
 socketManager.init(io);
 eventBus.init(io);
 const adminSocket = setupAdminSocket(io);
@@ -171,23 +193,28 @@ function checkChatSpam(userId) {
   return { allowed: true };
 }
 
+async function attachUserSocket(socket) {
+  const userId = socket.userId;
+  if (!userId) return;
+  socket.join(`user:${userId}`);
+  const queue = GameEngine.getQueue();
+  const queueIndex = queue.findIndex((p) => {
+    if (p.teamMode) return p.captainId === userId;
+    return p.userId === userId;
+  });
+  if (queueIndex !== -1) {
+    GameEngine.queue[queueIndex].socketId = socket.id;
+    await GameEngine.processMatchmaking();
+  }
+}
+
 io.on('connection', (socket) => {
   console.log(`✅ User connected: ${socket.id}`);
+  attachUserSocket(socket).catch((err) => console.error('attachUserSocket', err.message));
 
-  socket.on('register', async ({ userId }) => {
-    socket.userId = userId;
-    if (userId) {
-      socket.join(`user:${userId}`);
-    }
-    const queue = GameEngine.getQueue();
-    const queueIndex = queue.findIndex((p) => {
-      if (p.teamMode) return p.captainId === userId;
-      return p.userId === userId;
-    });
-    if (queueIndex !== -1) {
-      GameEngine.queue[queueIndex].socketId = socket.id;
-      await GameEngine.processMatchmaking();
-    }
+  /** Re-run queue reattachment after reconnect (client userId comes from JWT only). */
+  socket.on('register', async () => {
+    await attachUserSocket(socket);
   });
 
   socket.on('joinLobbyChat', async () => {

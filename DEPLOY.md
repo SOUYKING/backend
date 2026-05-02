@@ -19,7 +19,7 @@
 
 ### Last doc update
 - **Purpose:** onboarding + deploy reference for humans and AI.
-- **Changelog:** squad modes, multi-tournament UX, `/match/current`, evidence/register fixes, live-match UI — see changelog section for detail.
+- **Changelog:** Socket JWT handshake, security/UI hardening — see changelog (May 2026).
 
 ---
 
@@ -87,6 +87,10 @@ Fortnite tournament matchmaking platform: **1v1**, **2v2**, **3v3**, and **4v4**
 ## Changelog (recent shipped work)
 
 Use this section to confirm production matches `main` on both repos after deploy.
+
+### May 2026 — security, sockets, UI polish
+- **Backend (`SOUYKING/backend`):** Socket.io **`io.use` JWT** — `socket.userId` is set only from a valid Bearer token in `handshake.auth` (optional anonymous connect without token). `register` only reattaches queue `socketId` (no client-supplied Discord id). **`GET /auth/emergency-login` disabled** (405; use POST only). **`GET /teams/search-users`** escapes regex in the query. **`GET /announcements`** is public (active rows only; no auth).
+- **Frontend (`SOUYKING/FRONTEND`):** **`utils/gameSocket.js`** — connect after login with `auth.token`; **`App.js`** uses it instead of anonymous auto-connect. **Sidebar:** Notifications link, safe `user` JSON parse, `user-updated` refreshes admin section. **NotificationPage:** safe local notifications parse; announcements via **`getAnnouncements`**. **Dashboard:** safe stored user parse. **QueuePage:** team validation before “joining” state; `register` without spoofed id. **MatchPage:** chat errors/warnings in **`chatNotice`** banner (not mixed with result status). **`api.js`:** **`leaveActiveMatch`** → `POST /match/leave`. **Login:** removed fake random “matches” stat.
 
 ### Squad modes (2v2 / 3v3 / 4v4) — behavior summary
 - **Queue:** Only the **team captain** joins queue (socket `joinQueue` and REST `POST /matchmaking/join`). Team row in memory uses `userId: team:<MongoId>`, `teamMemberIds`, `captainId`, `teamSize`, average RP for pairing.
@@ -213,6 +217,10 @@ Set values in dashboards (Render/Vercel). Do not commit secrets to git.
 - Open frontend with `REACT_APP_API_URL` / `REACT_APP_SOCKET_URL` pointing at the deployed backend.
 - Smoke test: login, **1v1 queue**, **2v2** (captain queue, teammate Current Game), match complete, RP/leaderboard row updates.
 - Confirm Render env `FRONTEND_URL` matches the site users use (CORS + OAuth).
+- Verify search ownership files and sitemap endpoints:
+  - Google verification file must be at root (example): `https://fntarena.online/googleXXXXXXXXXXXX.html`
+  - Bing verification file must be at root: `https://fntarena.online/BingSiteAuth.xml`
+  - Sitemap is separate (indexing, not ownership): `https://fntarena.online/sitemap.xml`
 
 ---
 

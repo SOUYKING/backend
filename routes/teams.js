@@ -36,12 +36,16 @@ const requireTeamAccess = (req, res, next) => {
 
 router.use(authenticate, requireTeamAccess);
 
+function escapeRegex(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 router.get('/search-users', async (req, res) => {
   try {
     const q = (req.query.q || '').trim();
     if (q.length < 2) return res.json([]);
     const users = await User.find({
-      discordName: { $regex: q, $options: 'i' },
+      discordName: { $regex: escapeRegex(q), $options: 'i' },
       discordId: { $ne: req.user.id },
       isBanned: { $ne: true },
     }).select('discordId discordName discordAvatar epicGamesName').limit(10);
