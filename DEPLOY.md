@@ -88,6 +88,9 @@ Fortnite tournament matchmaking platform: **1v1**, **2v2**, **3v3**, and **4v4**
 
 Use this section to confirm production matches `main` on both repos after deploy.
 
+### May 2026 — tournament max players
+- **Backend / Frontend:** `maxPlayers` schema and admin create/edit forms allow up to **300** (was 128).
+
 ### May 2026 — security, sockets, UI polish
 - **Backend (`SOUYKING/backend`):** Socket.io **`io.use` JWT** — `socket.userId` is set only from a valid Bearer token in `handshake.auth` (optional anonymous connect without token). `register` only reattaches queue `socketId` (no client-supplied Discord id). **`GET /auth/emergency-login` disabled** (405; use POST only). **`GET /teams/search-users`** escapes regex in the query. **`GET /announcements`** is public (active rows only; no auth).
 - **Frontend (`SOUYKING/FRONTEND`):** **`utils/gameSocket.js`** — connect after login with `auth.token`; **`App.js`** uses it instead of anonymous auto-connect. **Sidebar:** Notifications link, safe `user` JSON parse, `user-updated` refreshes admin section. **NotificationPage:** safe local notifications parse; announcements via **`getAnnouncements`**. **Dashboard:** safe stored user parse. **QueuePage:** team validation before “joining” state; `register` without spoofed id. **MatchPage:** chat errors/warnings in **`chatNotice`** banner (not mixed with result status). **`api.js`:** **`leaveActiveMatch`** → `POST /match/leave`. **Login:** removed fake random “matches” stat.

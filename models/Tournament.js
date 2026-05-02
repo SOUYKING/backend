@@ -50,7 +50,7 @@ const tournamentSchema = new mongoose.Schema({
     type: Number,
     default: 16,
     min: 2,
-    max: 128,
+    max: 300,
   },
   minSkillRating: {
     type: Number,
